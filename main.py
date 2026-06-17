@@ -95,6 +95,7 @@ class GridDrawState:
     puzzle: SudokuGrid
     pv: PadView
     sy: int
+    cursor: tuple[int,int]
 
 def init_curses(stdscr):
     curses.raw()
@@ -102,6 +103,15 @@ def init_curses(stdscr):
     curses.use_default_colors()
 
     stdscr.nodelay(True)
+
+    # init colors
+    assert curses.COLOR_PAIRS > 3
+    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+
+    global ATTR_CUR, ATTR_PROV
+    ATTR_CUR = curses.color_pair(1)
+    ATTR_PROV = curses.color_pair(2)
 
 def clamp(val: int, max_: int, clamped: int | None = None) -> int:# {{{
     if clamped is None: clamped = max_
@@ -275,6 +285,17 @@ def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:
 
     return False
 
+ATTR_NORMAL = curses.A_NORMAL
+ATTR_CUR = None
+ATTR_PROV = None
+def cell_attr(y: int, x: int, cell: GridCell, cursor: tuple[int,int]) -> int: # assuming curses attrs are ints
+    if (y, x) == cursor:
+        return ATTR_CUR
+    if cell.provided:
+        return ATTR_PROV
+    else:
+        return ATTR_NORMAL
+
 def draw_big_grid(win: curses.window, grid_state: GridDrawState):
     grid_state.pv.desired_view_size = LARGE_GRID_SIZE
     _, w = grid_state.pv.desired_view_size
@@ -285,19 +306,20 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):
     for i, cell in enumerate(grid_state.puzzle.grid):
         if len(cell.nums) == 0: continue
         y, x = divmod(i, 9)
+        attr = cell_attr(y, x, cell, grid_state.cursor)
         cur_y = 4 * y + 1
         cur_x = 8 * x + 2
         if len(cell.nums) == 1:
             digit = cell.nums[0]
             digit_lines = font_l[digit]
             for line_i, line in enumerate(digit_lines):
-                win.addstr(cur_y + line_i, cur_x, line)
+                win.addstr(cur_y + line_i, cur_x, line, attr)
 
         else:
             digits = cell.nums
             for digit in digits:
                 off_y, off_x = divmod(digit - 1, 3)
-                win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit))
+                win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit), attr)
 
 def draw_small_grid(win: curses.window, grid_state: GridDrawState):
     grid_state.pv.pad_start = (0, 0)
@@ -311,7 +333,9 @@ def draw_small_grid(win: curses.window, grid_state: GridDrawState):
         if len(cell.nums) != 1: continue
         digit = cell.nums[0]
         y, x = divmod(i, 9)
-        win.addstr(2 * y + 1, 4 * x + 2, str(digit))
+        attr = cell_attr(y, x, cell, grid_state.cursor)
+
+        win.addstr(2 * y + 1, 4 * x + 2, str(digit), attr)
 
 SUDOKU_GRID_MARGIN = 5
 def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:
@@ -325,9 +349,9 @@ def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:
         puzzle = prog.get("puzzle", None)
         sy, _ = pv.desired_screen_start
         if prog.get("use_big_grid", False):
-            draw_big_grid(win, GridDrawState(puzzle, pv, sy))
+            draw_big_grid(win, GridDrawState(puzzle, pv, sy, prog.get("cursor", (0, 0))))
         else:
-            draw_small_grid(win, GridDrawState(puzzle, pv, sy))
+            draw_small_grid(win, GridDrawState(puzzle, pv, sy, prog.get("cursor", (0, 0))))
 
         return True
 
@@ -366,6 +390,10 @@ def statusbar_def_reset(**kwargs) -> Callable[[], None]:
 
     return on_reset
 
+def clamp_cursor(cursor: tuple[int, int]) -> tuple[int, int]:
+    y, x = cursor
+    return (min(0, max(8, y)), max(0, max(8, x)))
+
 EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
 
 def main(stdscr: curses.window):
@@ -373,6 +401,7 @@ def main(stdscr: curses.window):
 
     puzzle = grid_from_str(EXAMPLE_PUZZLE)
     puzzle.grid[2].nums = (2,3,4,9)
+    puzzle.grid[31].provided = True
 
     prog = {
             "default_status_fn": display_screen_size,
@@ -433,6 +462,26 @@ def main(stdscr: curses.window):
             continue
         if key == askey("-"):
             prog["use_big_grid"] = False
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("h") or kbytes[0] == curses.KEY_LEFT:
+            y, x = prog.get("cursor", (0, 0))
+            prog["cursor"] = clamp_cursor((y, x - 1))
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("l") or kbytes[0] == curses.KEY_RIGHT:
+            y, x = prog.get("cursor", (0, 0))
+            prog["cursor"] = clamp_cursor((y, x + 1))
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("j") or kbytes[0] == curses.KEY_DOWN:
+            y, x = prog.get("cursor", (0, 0))
+            prog["cursor"] = clamp_cursor((y + 1, x))
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("k") or kbytes[0] == curses.KEY_UP:
+            y, x = prog.get("cursor", (0, 0))
+            prog["cursor"] = clamp_cursor((y - 1, x))
             windraw_refresh(stddraw)
             continue
 
