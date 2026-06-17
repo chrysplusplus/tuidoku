@@ -90,6 +90,12 @@ class GridCell:
 class SudokuGrid:
     grid: list[GridCell]
 
+@dataclass(slots = True)
+class GridDrawState:
+    puzzle: SudokuGrid
+    pv: PadView
+    sy: int
+
 def init_curses(stdscr):
     curses.raw()
     curses.curs_set(0)
@@ -256,66 +262,72 @@ def stddraw_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
 
     return on_draw
 # }}}
+def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:
+    draw_errmsg = "Screen too small to display grid"
+    if SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN:
+        prog["status_fn"] = lambda: draw_errmsg
+        prog["sudoku_draw_last_err"] = True
+        return True
+
+    if prog.get("sudoku_draw_last_err", False): # reset if resized screen is no longer too small
+        reset_fn()
+        prog["sudoku_draw_last_err"] = False
+
+    return False
+
+def draw_big_grid(win: curses.window, grid_state: GridDrawState):
+    grid_state.pv.desired_view_size = LARGE_GRID_SIZE
+    _, w = grid_state.pv.desired_view_size
+    grid_state.pv.desired_screen_start = (grid_state.sy, (curses.COLS - w) // 2)
+
+    win_addlines(win, LARGE_GRID)
+
+    for i, cell in enumerate(grid_state.puzzle.grid):
+        if len(cell.nums) == 0: continue
+        y, x = divmod(i, 9)
+        cur_y = 4 * y + 1
+        cur_x = 8 * x + 2
+        if len(cell.nums) == 1:
+            digit = cell.nums[0]
+            digit_lines = font_l[digit]
+            for line_i, line in enumerate(digit_lines):
+                win.addstr(cur_y + line_i, cur_x, line)
+
+        else:
+            digits = cell.nums
+            for digit in digits:
+                off_y, off_x = divmod(digit - 1, 3)
+                win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit))
+
+def draw_small_grid(win: curses.window, grid_state: GridDrawState):
+    grid_state.pv.pad_start = (0, 0)
+    sx = (curses.COLS - SMALL_GRID_SIZE[1]) // 2
+    grid_state.pv.desired_screen_start = (grid_state.sy, sx)
+    grid_state.pv.desired_view_size = SMALL_GRID_SIZE
+
+    win_addlines(win, SMALL_GRID)
+
+    for i, cell in enumerate(grid_state.puzzle.grid):
+        if len(cell.nums) != 1: continue
+        digit = cell.nums[0]
+        y, x = divmod(i, 9)
+        win.addstr(2 * y + 1, 4 * x + 2, str(digit))
+
 SUDOKU_GRID_MARGIN = 5
 def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:
-    draw_errmsg = "Screen too small to display grid"
-    last_err = False
-
-    # TODO refactor into several functions
     def on_draw(win: curses.window) -> bool:
-        nonlocal last_err
         prog = kwargs['prog']
-        puzzle = prog.get("puzzle", None)
         pv = kwargs['pv']
-        h, w = SMALL_GRID_SIZE
-        sy, _ = pv.desired_screen_start
+
         win.clear()
-        if h > curses.LINES - SUDOKU_GRID_MARGIN:
-            prog["status_fn"] = lambda: draw_errmsg
-            last_err = True
-            return True
+        if is_small_screen(prog, kwargs['reset_statusbar']): return True
 
-        if last_err:
-            reset_statusbar = kwargs['reset_statusbar']
-            reset_statusbar()
-            last_err = False
-
+        puzzle = prog.get("puzzle", None)
+        sy, _ = pv.desired_screen_start
         if prog.get("use_big_grid", False):
-            pv.desired_view_size = LARGE_GRID_SIZE
-            _, w = pv.desired_view_size
-            pv.desired_screen_start = (sy, (curses.COLS - w) // 2)
-            win_addlines(win, LARGE_GRID)
-
-            for i, cell in enumerate(puzzle.grid):
-                if len(cell.nums) == 0: continue
-                y, x = divmod(i, 9)
-                cur_y = 4 * y + 1
-                cur_x = 8 * x + 2
-                if len(cell.nums) == 1:
-                    digit = cell.nums[0]
-                    digit_lines = font_l[digit]
-                    for line_i, line in enumerate(digit_lines):
-                        win.addstr(cur_y + line_i, cur_x, line)
-
-                else:
-                    digits = cell.nums
-                    for digit in digits:
-                        off_y, off_x = divmod(digit - 1, 3)
-                        win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit))
-
-            return True
-
-        pv.pad_start = (0, 0)
-        sx = (curses.COLS - w) // 2
-        pv.desired_screen_start = (sy, sx)
-        pv.desired_view_size = SMALL_GRID_SIZE
-        win_addlines(win, SMALL_GRID)
-
-        for i, cell in enumerate(puzzle.grid):
-            if len(cell.nums) != 1: continue
-            digit = cell.nums[0]
-            y, x = divmod(i, 9)
-            win.addstr(2 * y + 1, 4 * x + 2, str(digit))
+            draw_big_grid(win, GridDrawState(puzzle, pv, sy))
+        else:
+            draw_small_grid(win, GridDrawState(puzzle, pv, sy))
 
         return True
 
@@ -364,8 +376,10 @@ def main(stdscr: curses.window):
 
     prog = {
             "default_status_fn": display_screen_size,
-            "use_big_grid": True,
+            "sudoku_draw_last_err": False,
+            "use_big_grid": False,
             "puzzle": puzzle,
+            "cursor": (0, 0),
             }
     prog['status_fn'] = prog['default_status_fn']
 
