@@ -293,6 +293,7 @@ def stddraw_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
 
     return on_draw
 # }}}
+SUDOKU_GRID_MARGIN = 5
 def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
     draw_errmsg = "Screen too small to display grid"
     if SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN:
@@ -325,11 +326,20 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
 
     win_addlines(win, LARGE_GRID)
 
+    cy, cx = grid_state.puzzle.cursor
+
     for i, cell in enumerate(grid_state.puzzle.grid):
-        if len(cell.nums) == 0: continue
         y, x = divmod(i, 9)
-        attr = cell_attr(y, x, cell)
         cur_y, cur_x = scale_big_grid_coords((y, x))
+        if len(cell.nums) == 0 and (y, x) == (cy, cx):
+            for dy in range(3):
+                win.addstr(cur_y + dy, cur_x, " " * 5, curses.A_REVERSE)
+
+        if len(cell.nums) == 0:
+            continue
+
+        attr = cell_attr(y, x, cell)
+        attr = attr | curses.A_REVERSE if (y, x) == (cy, cx) else attr
         if len(cell.nums) == 1:
             digit = cell.nums[0]
             digit_lines = font_l[digit]
@@ -338,9 +348,12 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
 
         else:
             digits = cell.nums
-            for digit in digits:
-                off_y, off_x = divmod(digit - 1, 3)
-                win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit), attr)
+            for line_i in range(3):
+                line_digits = []
+                for test_num in (3 * line_i + i + 1 for i in range(3)):
+                    line_digits.append(str(test_num) if test_num in digits else " ")
+
+                win.addstr(cur_y + line_i, cur_x, " ".join(line_digits), attr)
 # }}}
 def scale_small_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
     y, x = coords
@@ -362,7 +375,6 @@ def draw_small_grid(win: curses.window, grid_state: GridDrawState):# {{{
 
         win.addstr(cur_y, cur_x, digit, attr)
 # }}}
-SUDOKU_GRID_MARGIN = 5
 def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
     cursor = kwargs["cursor"]
     def on_draw(win: curses.window) -> bool:
@@ -375,10 +387,8 @@ def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
         puzzle = prog.get("puzzle", None)
         sy, _ = pv.desired_screen_start
         if puzzle.use_big_grid:
-            cy, cx = scale_big_grid_coords(puzzle.cursor)
             draw_big_grid(win, GridDrawState(puzzle, pv, sy))
-            sy, sx = pv.desired_screen_start
-            cursor.cursor = (cy + sy + 1, cx + sx + 2)
+            cursor.cursor = (-1, -1)
 
         else:
             cy, cx = scale_small_grid_coords(puzzle.cursor)
