@@ -7,6 +7,8 @@
 - implement puzzle generation
 - refactor big number draws to account for padding (current manually set)
 - implement undo
+- implement more visual mode indicator
+- implement line and box guides
 """
 
 import curses
@@ -415,14 +417,17 @@ def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
 
     return on_draw
 # }}}
-def sudoku_move_rel_cursor(sudoku: SudokuGrid, rel: tuple[int, int]) -> bool: # {{{
+def sudoku_move_abs_cursor(sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):
+    oldy, oldx = sudoku.cursor
+    sudoku.cursor = (y if y is not None else oldy, x if x is not None else oldx)
+
+def sudoku_move_rel_cursor(sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> bool: # {{{
     '''Returns True if cursor changed, otherwise False'''
-    y, x = sudoku.cursor
-    rel_y, rel_x = rel
-    new_y = max(0, min(8, y + rel_y))
-    new_x = max(0, min(8, x + rel_x))
-    sudoku.cursor = (new_y, new_x)
-    return (y, x) != (new_y, new_x)
+    oldy, oldx = sudoku.cursor
+    newy = (oldy + y) % 9
+    newx = (oldx + x) % 9
+    sudoku.cursor = (newy, newx)
+    return (oldy, oldx) != (newy, newx)
 # }}}
 MODE_STRINGS = [# {{{
         "-- NORMAL --", "-- NOTE --" ]# }}}
@@ -562,22 +567,38 @@ def main(stdscr: curses.window):
             windraw_refresh(stddraw)
             continue
         if key == askey("h") or key == askey("a") or kbytes[0] == curses.KEY_LEFT:
-            if sudoku_move_rel_cursor(puzzle, (0, -1)): windraw_refresh(stddraw)
+            if sudoku_move_rel_cursor(puzzle, x = -1): windraw_refresh(stddraw)
             continue
         if key == askey("l") or key == askey("d") or kbytes[0] == curses.KEY_RIGHT:
-            if sudoku_move_rel_cursor(puzzle, (0, 1)): windraw_refresh(stddraw)
+            if sudoku_move_rel_cursor(puzzle, x = 1): windraw_refresh(stddraw)
             continue
         if key == askey("j") or key == askey("s") or kbytes[0] == curses.KEY_DOWN:
-            if sudoku_move_rel_cursor(puzzle, (1, 0)): windraw_refresh(stddraw)
+            if sudoku_move_rel_cursor(puzzle, y = 1): windraw_refresh(stddraw)
             continue
         if key == askey("k") or key == askey("w") or kbytes[0] == curses.KEY_UP:
-            if sudoku_move_rel_cursor(puzzle, (-1, 0)): windraw_refresh(stddraw)
+            if sudoku_move_rel_cursor(puzzle, y = -1): windraw_refresh(stddraw)
             continue
-        if kbytes[0] == curses.KEY_BACKSPACE:
+        if key == askey("H") or kbytes[0] == curses.KEY_HOME:
+            sudoku_move_abs_cursor(puzzle, x = 0)
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("L") or kbytes[0] == curses.KEY_END:
+            sudoku_move_abs_cursor(puzzle, x = 8)
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("J") or kbytes[0] == curses.KEY_NPAGE:
+            sudoku_move_abs_cursor(puzzle, y = 8)
+            windraw_refresh(stddraw)
+            continue
+        if key == askey("K") or kbytes[0] == curses.KEY_PPAGE:
+            sudoku_move_abs_cursor(puzzle, y = 0)
+            windraw_refresh(stddraw)
+            continue
+        if kbytes[0] == curses.KEY_BACKSPACE or kbytes[0] == curses.KEY_DC or key == askey("."):
             sudoku_del(puzzle)
             windraw_refresh(stddraw)
             continue
-        if key == askey("n"):
+        if key == askey("n") or key == askey("0"):
             sudoku_toggle_note_mode(puzzle)
             windraw_refresh(stddraw)
             continue
