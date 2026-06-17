@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+
+"""
+# TODO
+
+- implement game controls
+- implement puzzle generation
+"""
+
 import curses
 import curses.ascii as cascii
 
@@ -89,30 +98,32 @@ class GridCell:
 @dataclass(slots = True)
 class SudokuGrid:
     grid: list[GridCell]
+    cursor: tuple[int, int] = (0, 0)
+    use_big_grid: bool = False
 
 @dataclass(slots = True)
 class GridDrawState:
     puzzle: SudokuGrid
     pv: PadView
     sy: int
-    cursor: tuple[int,int]
 
-def init_curses(stdscr):
+@dataclass(slots = True)
+class Cursor:
+    cursor: tuple[int, int]
+
+def init_curses(stdscr):# {{{
     curses.raw()
-    curses.curs_set(0)
     curses.use_default_colors()
 
     stdscr.nodelay(True)
 
     # init colors
-    assert curses.COLOR_PAIRS > 3
-    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    assert curses.COLOR_PAIRS > 2
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
 
-    global ATTR_CUR, ATTR_PROV
-    ATTR_CUR = curses.color_pair(1)
-    ATTR_PROV = curses.color_pair(2)
-
+    global ATTR_PROV
+    ATTR_PROV = curses.color_pair(1)
+# }}}
 def clamp(val: int, max_: int, clamped: int | None = None) -> int:# {{{
     if clamped is None: clamped = max_
     return clamped if val > max_ else val
@@ -189,7 +200,7 @@ def getkbytes(stdscr: curses.window) -> list[int]:# {{{
         key = stdscr.getch()
     return kbytes
 # }}}
-def grid_from_str(s: str) -> GridCell | None:# {{{
+def grid_from_str(s: str) -> SudokuGrid | None:# {{{
     grid = []
     for ch in s:
         if ch == ".":
@@ -259,20 +270,30 @@ def win_addlines(win: curses.window, lines: list[str]):# {{{
         if y > maxy:
             break
 # }}}
+def win_move_cursor(win: curses.window, cursor: Cursor):# {{{
+    cy, cx = cursor.cursor
+    if cy < 0 or cy > curses.LINES - 1 or cx < 0 or cx > curses.COLS - 1:
+        curses.curs_set(0)
+    else:
+        curses.curs_set(1)
+        win.move(cy, cx)
+# }}}
 def stddraw_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
-    children = kwargs.get("children", [])
+    children = kwargs["children"]
+    cursor = kwargs["cursor"]
     def on_draw(win: curses.window) -> bool:
-        win.clear()
+        win.erase()
 
         win.noutrefresh()
         for child in children:
             windraw_noutrefresh(*child)
 
+        win_move_cursor(win, cursor)
         return False
 
     return on_draw
 # }}}
-def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:
+def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
     draw_errmsg = "Screen too small to display grid"
     if SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN:
         prog["status_fn"] = lambda: draw_errmsg
@@ -284,19 +305,20 @@ def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:
         prog["sudoku_draw_last_err"] = False
 
     return False
-
+# }}}
 ATTR_NORMAL = curses.A_NORMAL
-ATTR_CUR = None
-ATTR_PROV = None
-def cell_attr(y: int, x: int, cell: GridCell, cursor: tuple[int,int]) -> int: # assuming curses attrs are ints
-    if (y, x) == cursor:
-        return ATTR_CUR
+ATTR_PROV = None # initialised by init_curses
+def cell_attr(y: int, x: int, cell: GridCell) -> int: # assuming curses attrs are ints{{{
     if cell.provided:
         return ATTR_PROV
     else:
         return ATTR_NORMAL
-
-def draw_big_grid(win: curses.window, grid_state: GridDrawState):
+# }}}
+def scale_big_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
+    y, x = coords
+    return (4 * y + 1, 8 * x + 2)
+# }}}
+def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
     grid_state.pv.desired_view_size = LARGE_GRID_SIZE
     _, w = grid_state.pv.desired_view_size
     grid_state.pv.desired_screen_start = (grid_state.sy, (curses.COLS - w) // 2)
@@ -306,9 +328,8 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):
     for i, cell in enumerate(grid_state.puzzle.grid):
         if len(cell.nums) == 0: continue
         y, x = divmod(i, 9)
-        attr = cell_attr(y, x, cell, grid_state.cursor)
-        cur_y = 4 * y + 1
-        cur_x = 8 * x + 2
+        attr = cell_attr(y, x, cell)
+        cur_y, cur_x = scale_big_grid_coords((y, x))
         if len(cell.nums) == 1:
             digit = cell.nums[0]
             digit_lines = font_l[digit]
@@ -320,8 +341,12 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):
             for digit in digits:
                 off_y, off_x = divmod(digit - 1, 3)
                 win.addstr(cur_y + off_y, cur_x + 2 * off_x, str(digit), attr)
-
-def draw_small_grid(win: curses.window, grid_state: GridDrawState):
+# }}}
+def scale_small_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
+    y, x = coords
+    return (2 * y + 1, 4 * x + 2)
+# }}}
+def draw_small_grid(win: curses.window, grid_state: GridDrawState):# {{{
     grid_state.pv.pad_start = (0, 0)
     sx = (curses.COLS - SMALL_GRID_SIZE[1]) // 2
     grid_state.pv.desired_screen_start = (grid_state.sy, sx)
@@ -330,70 +355,83 @@ def draw_small_grid(win: curses.window, grid_state: GridDrawState):
     win_addlines(win, SMALL_GRID)
 
     for i, cell in enumerate(grid_state.puzzle.grid):
-        if len(cell.nums) != 1: continue
-        digit = cell.nums[0]
         y, x = divmod(i, 9)
-        attr = cell_attr(y, x, cell, grid_state.cursor)
+        cur_y, cur_x = scale_small_grid_coords((y, x))
+        attr = cell_attr(y, x, cell)
+        digit = str(cell.nums[0]) if len(cell.nums) == 1 else ' '
 
-        win.addstr(2 * y + 1, 4 * x + 2, str(digit), attr)
-
+        win.addstr(cur_y, cur_x, digit, attr)
+# }}}
 SUDOKU_GRID_MARGIN = 5
-def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:
+def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
+    cursor = kwargs["cursor"]
     def on_draw(win: curses.window) -> bool:
         prog = kwargs['prog']
         pv = kwargs['pv']
 
-        win.clear()
+        win.erase()
         if is_small_screen(prog, kwargs['reset_statusbar']): return True
 
         puzzle = prog.get("puzzle", None)
         sy, _ = pv.desired_screen_start
-        if prog.get("use_big_grid", False):
-            draw_big_grid(win, GridDrawState(puzzle, pv, sy, prog.get("cursor", (0, 0))))
+        if puzzle.use_big_grid:
+            cy, cx = scale_big_grid_coords(puzzle.cursor)
+            draw_big_grid(win, GridDrawState(puzzle, pv, sy))
+            sy, sx = pv.desired_screen_start
+            cursor.cursor = (cy + sy + 1, cx + sx + 2)
+
         else:
-            draw_small_grid(win, GridDrawState(puzzle, pv, sy, prog.get("cursor", (0, 0))))
+            cy, cx = scale_small_grid_coords(puzzle.cursor)
+            draw_small_grid(win, GridDrawState(puzzle, pv, sy))
+            sy, sx = pv.desired_screen_start
+            cursor.cursor = (cy + sy, cx + sx)
 
         return True
 
     return on_draw
-
-def titlebar_def_draw(**kwargs) -> Callable[[curses.window], bool]:
+# }}}
+def titlebar_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
     def on_draw(win: curses.window) -> bool:
-        win.clear()
+        win.erase()
         _, maxx = win.getmaxyx()
         text = "SUDOKU"[:maxx + 1]
         win.addstr(0, (maxx - len(text)) // 2, text)
         return True
 
     return on_draw
-
-def statusbar_def_draw(**kwargs) -> Callable[[curses.window], bool]:
+# }}}
+def statusbar_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
     def on_draw(win: curses.window) -> bool:
         prog = kwargs['prog']
         status_fn = prog.get("status_fn", lambda: "")
         win.mvwin(curses.LINES - 1, 0)
         _, maxx = win.getmaxyx()
-        win.clear()
+        win.erase()
         txt = status_fn()
         win.addstr(txt[:maxx + 1])
         return True
 
     return on_draw
-
-def display_screen_size() -> str:
+# }}}
+def display_screen_size() -> str:# {{{
     return f" {curses.LINES}, {curses.COLS}"
-
-def statusbar_def_reset(**kwargs) -> Callable[[], None]:
+# }}}
+def statusbar_def_reset(**kwargs) -> Callable[[], None]:# {{{
     def on_reset():
         prog = kwargs['prog']
         prog['status_fn'] = prog.get("default_status_fn", None)
 
     return on_reset
-
-def clamp_cursor(cursor: tuple[int, int]) -> tuple[int, int]:
-    y, x = cursor
-    return (min(0, max(8, y)), max(0, max(8, x)))
-
+# }}}
+def sudoku_move_rel_cursor(sudoku: SudokuGrid, rel: tuple[int, int]) -> bool: # {{{
+    '''Returns True if cursor changed, otherwise False'''
+    y, x = sudoku.cursor
+    rel_y, rel_x = rel
+    new_y = max(0, min(8, y + rel_y))
+    new_x = max(0, min(8, x + rel_x))
+    sudoku.cursor = (new_y, new_x)
+    return (y, x) != (new_y, new_x)
+# }}}
 EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
 
 def main(stdscr: curses.window):
@@ -406,15 +444,14 @@ def main(stdscr: curses.window):
     prog = {
             "default_status_fn": display_screen_size,
             "sudoku_draw_last_err": False,
-            "use_big_grid": False,
             "puzzle": puzzle,
-            "cursor": (0, 0),
             }
     prog['status_fn'] = prog['default_status_fn']
 
     reset_statusbar = statusbar_def_reset(prog = prog)
 
     stddraw = WindowDrawState(stdscr)
+    stdcurs = Cursor((0, 0))
     children = []
 
     sudoku_grid = curses.newpad(100, 100)
@@ -423,7 +460,8 @@ def main(stdscr: curses.window):
     sudoku_draw.on_draw = sudoku_def_draw(
             pv = sudoku_view,
             prog = prog,
-            reset_statusbar = reset_statusbar
+            reset_statusbar = reset_statusbar,
+            cursor = stdcurs
             )
     children.append((sudoku_draw, sudoku_view))
 
@@ -437,7 +475,7 @@ def main(stdscr: curses.window):
     statusbar.on_draw = statusbar_def_draw(prog = prog)
     children.append((statusbar,))
 
-    stddraw.on_draw = stddraw_def_draw(children = children)
+    stddraw.on_draw = stddraw_def_draw(children = children, cursor = stdcurs)
 
     windraw_refresh(stddraw)
 
@@ -457,32 +495,24 @@ def main(stdscr: curses.window):
             windraw_refresh(stddraw)
             continue
         if key == askey("+") or key == askey("="):
-            prog["use_big_grid"] = True
+            puzzle.use_big_grid = True
             windraw_refresh(stddraw)
             continue
         if key == askey("-"):
-            prog["use_big_grid"] = False
+            puzzle.use_big_grid = False
             windraw_refresh(stddraw)
             continue
-        if key == askey("h") or kbytes[0] == curses.KEY_LEFT:
-            y, x = prog.get("cursor", (0, 0))
-            prog["cursor"] = clamp_cursor((y, x - 1))
-            windraw_refresh(stddraw)
+        if key == askey("h") or key == askey("a") or kbytes[0] == curses.KEY_LEFT:
+            if sudoku_move_rel_cursor(puzzle, (0, -1)): windraw_refresh(stddraw)
             continue
-        if key == askey("l") or kbytes[0] == curses.KEY_RIGHT:
-            y, x = prog.get("cursor", (0, 0))
-            prog["cursor"] = clamp_cursor((y, x + 1))
-            windraw_refresh(stddraw)
+        if key == askey("l") or key == askey("d") or kbytes[0] == curses.KEY_RIGHT:
+            if sudoku_move_rel_cursor(puzzle, (0, 1)): windraw_refresh(stddraw)
             continue
-        if key == askey("j") or kbytes[0] == curses.KEY_DOWN:
-            y, x = prog.get("cursor", (0, 0))
-            prog["cursor"] = clamp_cursor((y + 1, x))
-            windraw_refresh(stddraw)
+        if key == askey("j") or key == askey("s") or kbytes[0] == curses.KEY_DOWN:
+            if sudoku_move_rel_cursor(puzzle, (1, 0)): windraw_refresh(stddraw)
             continue
-        if key == askey("k") or kbytes[0] == curses.KEY_UP:
-            y, x = prog.get("cursor", (0, 0))
-            prog["cursor"] = clamp_cursor((y - 1, x))
-            windraw_refresh(stddraw)
+        if key == askey("k") or key == askey("w") or kbytes[0] == curses.KEY_UP:
+            if sudoku_move_rel_cursor(puzzle, (-1, 0)): windraw_refresh(stddraw)
             continue
 
 if __name__ == "__main__":
