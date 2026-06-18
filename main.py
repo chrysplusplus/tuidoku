@@ -3,11 +3,11 @@
 """
 # TODO
 
-- implement game controls
+- refine game controls
 - implement puzzle generation
 - refactor big number draws to account for padding (current manually set)
+- refactor cell highlighting
 - implement undo
-- implement more visual mode indicator
 - implement line and box guides
 """
 
@@ -126,11 +126,13 @@ def init_curses(stdscr):# {{{
     curses.use_default_colors()
 
     # init colors
-    assert curses.COLOR_PAIRS > 2
+    assert curses.COLOR_PAIRS > 3
     curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_CYAN, -1)
 
-    global ATTR_PROV
+    global ATTR_PROV, ATTR_NOTE_CURS
     ATTR_PROV = curses.color_pair(1)
+    ATTR_NOTE_CURS = curses.color_pair(2) | curses.A_REVERSE
 # }}}
 def clamp(val: int, max_: int, clamped: int | None = None) -> int:# {{{
     if clamped is None: clamped = max_
@@ -344,7 +346,8 @@ def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
     return False
 # }}}
 ATTR_NORMAL = curses.A_NORMAL
-ATTR_PROV = None # initialised by init_curses
+ATTR_PROV = None        # initialised by init_curses
+ATTR_NOTE_CURS = None   # initialised by init_curses
 def cell_attr(y: int, x: int, cell: GridCell) -> int: # assuming curses attrs are ints{{{
     if cell.provided:
         return ATTR_PROV
@@ -369,15 +372,20 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
         y, x = divmod(i, 9)
         cur_y, cur_x = scale_big_grid_coords((y, x))
         if cell.num is None and len(cell.notes) == 0 and (y, x) == (cy, cx):
+            attr = ATTR_NOTE_CURS if grid_state.puzzle.mode == SUDOKU_MODE_NOTE else curses.A_REVERSE
             for dy in range(5):
-                win.addstr(cur_y + dy - 1, cur_x - 1, " " * 7, curses.A_REVERSE)
+                win.addstr(cur_y + dy - 1, cur_x - 1, " " * 7, attr)
             continue
 
         if cell.num is None and len(cell.notes) == 0:
             continue
 
         attr = cell_attr(y, x, cell)
-        attr = attr | curses.A_REVERSE if (y, x) == (cy, cx) else attr
+        if (y, x) == (cy, cx) and grid_state.puzzle.mode == SUDOKU_MODE_NOTE and attr == ATTR_NORMAL:
+            attr = ATTR_NOTE_CURS
+        elif (y, x) == (cy, cx):
+            attr = attr | curses.A_REVERSE
+
         if cell.num is not None:
             digit = cell.num
             digit_lines = font_l[digit]
