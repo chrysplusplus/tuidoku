@@ -1,6 +1,7 @@
 import curses
 import curses.ascii as cascii
 
+from collections import OrderedDict
 from dataclasses import dataclass, KW_ONLY
 from typing import Callable, TypeVar
 
@@ -8,7 +9,7 @@ from util import clamp
 
 T = TypeVar('T')
 
-@dataclass(slots = True)
+@dataclass(slots = True, frozen = True)
 class Key:
     ch: str
     _: KW_ONLY
@@ -34,13 +35,23 @@ class Cursor:
 
 ChildWindow = tuple[WindowDrawState, PadView | None]
 
-class MainWindow:
-    __slots__ = ("_stdscr", "children", "stdcurs")
+KeyMap = OrderedDict[Key, Callable[[], None]]
 
-    def __init__(self, stdscr_: curses.window):
+class MainWindow:
+    __slots__ = ("_stdscr", "children", "keymap", "is_running", "_getkbytes", "stdcurs")
+
+    def __init__(self, stdscr_: curses.window, *, nodelay: bool = False):
         self._stdscr = stdscr_
         self.children: list[ChildWindow] = []
+        self.keymap: KeyMap = OrderedDict()
+        self.is_running = False
         self.stdcurs = Cursor((0, 0))
+
+        if nodelay:
+            curses.nodelay()
+            self._getkbytes = getkbytes
+        else:
+            self._getkbytes = getkbytes_blocking
 
     @property
     def stdscr(self) -> curses.window:
@@ -61,6 +72,37 @@ class MainWindow:
 
     def add_child(self, windraw: WindowDrawState, pv: PadView | None = None):
         self.children.append((windraw, pv))
+
+    def add_mapping(self, key: Key, callback: Callable[[], None]) -> bool:
+        '''Return False if the key is already assigned, in which case, remove
+        the existing mapping and add the new one; otherwise return True'''
+        if key in self.keymap: return False
+        self.keymap[key] = callback
+        return True
+
+    def remove_mapping(self, key: Key) -> Callable[[], None] | None:
+        '''Return callback if key was removed, otherwise None'''
+        if key not in self.keymap: return None
+        callback = self.keymap[key]
+        del self.keymap[key]
+        return callback
+
+    def refresh(self):
+        windraw_refresh(self.stddraw)
+
+    def quit(self):
+        self.is_running = False
+
+    def mainloop(self):
+        self.is_running = True
+        while self.is_running:
+            kbytes = self._getkbytes(self._stdscr)
+            key = key_from_bytes(kbytes)
+            if key is None: continue
+            for mapped in self.keymap:
+                if key == mapped:
+                    self.keymap[key]()
+                    break
 
 def padview_clamp(pv: PadView) -> tuple[int,int,int,int,int,int]:# {{{
     '''Provides clamped values for pv.refresh() or pv.noutrefresh()'''
@@ -122,7 +164,8 @@ def getkbytes(stdscr: curses.window) -> list[int]:# {{{
 
 def getkbytes_blocking(win: curses.window) -> list[int]:# {{{
     byte0 = win.getch()
-    if byte0 > 0x100: return [byte0]
+    assert byte0 < curses.KEY_MAX
+    if byte0 >= curses.KEY_MIN: return [byte0]
     if byte0 == cascii.ESC:
         return [byte0] + getkbytes_blocking(win)
 
@@ -141,7 +184,7 @@ def unctrl(byte: int) -> str:# {{{
 def key_from_bytes(xs: list[int]) -> Key | None:# {{{
     assert len(xs) > 0
     x = xs[0]
-    if x > 0x80 and len(xs) == 1:
+    if x >= curses.KEY_MIN and len(xs) == 1:
         return Key(curses.keyname(x), special = True)
     if x > 0x80:
         try:
@@ -158,7 +201,14 @@ def key_from_bytes(xs: list[int]) -> Key | None:# {{{
         return Key(chr(x))
 # }}}
 
+SPECIAL_KEYS = tuple(m for m in dir(curses) if m.startswith("KEY_"))
+
 def askey(ch: str) -> Key:# {{{
+    if ch in SPECIAL_KEYS:
+        return Key(curses.keyname(getattr(curses, ch)), special = True)
+    if ch.startswith("KEY_"):
+        raise ValueError(f"Unknown key type: {ch}")
+
     upper = ch.upper()
     c_m = upper.startswith("C-M-")
     m_c = upper.startswith("M-C-")

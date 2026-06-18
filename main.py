@@ -454,104 +454,105 @@ def main(stdwin: tui.MainWindow):
 
     tui.windraw_refresh(stddraw)
 
-    while True:
-        kbytes = tui.getkbytes_blocking(stdscr)
-        key = tui.key_from_bytes(kbytes)
-        if key is None: continue
+    stdwin.add_mapping(tui.askey("KEY_RESIZE"), stdwin.refresh)
 
-        if kbytes[0] == curses.KEY_RESIZE:
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("q"):
-            break
-        if key == tui.askey("C-C"):
-            break
-        if key == tui.askey("C-L"):
-            stdscr.clear()
-            reset_statusbar()
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("+") or key == tui.askey("="):
-            puzzle.use_big_grid = True
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("-"):
-            puzzle.use_big_grid = False
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("h") or key == tui.askey("a") or kbytes[0] == curses.KEY_LEFT:
-            if sudoku_move_rel_cursor(puzzle, x = -1): tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("l") or key == tui.askey("d") or kbytes[0] == curses.KEY_RIGHT:
-            if sudoku_move_rel_cursor(puzzle, x = 1): tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("j") or key == tui.askey("s") or kbytes[0] == curses.KEY_DOWN:
-            if sudoku_move_rel_cursor(puzzle, y = 1): tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("k") or key == tui.askey("w") or kbytes[0] == curses.KEY_UP:
-            if sudoku_move_rel_cursor(puzzle, y = -1): tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("H") or kbytes[0] == curses.KEY_HOME:
-            sudoku_move_abs_cursor(puzzle, x = 0)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("L") or kbytes[0] == curses.KEY_END:
-            sudoku_move_abs_cursor(puzzle, x = 8)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("J") or kbytes[0] == curses.KEY_NPAGE:
-            sudoku_move_abs_cursor(puzzle, y = 8)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("K") or kbytes[0] == curses.KEY_PPAGE:
-            sudoku_move_abs_cursor(puzzle, y = 0)
-            tui.windraw_refresh(stddraw)
-            continue
-        if kbytes[0] == curses.KEY_BACKSPACE or kbytes[0] == curses.KEY_DC or key == tui.askey("."):
-            sudoku_del(puzzle)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("n") or key == tui.askey("0") or kbytes[0] == curses.KEY_IC:
-            sudoku_toggle_note_mode(puzzle)
-            tui.windraw_refresh(stddraw)
-            continue
-        # TODO refactor
-        if key == tui.askey("1"):
-            sudoku_ins(puzzle, 1)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("2"):
-            sudoku_ins(puzzle, 2)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("3"):
-            sudoku_ins(puzzle, 3)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("4"):
-            sudoku_ins(puzzle, 4)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("5"):
-            sudoku_ins(puzzle, 5)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("6"):
-            sudoku_ins(puzzle, 6)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("7"):
-            sudoku_ins(puzzle, 7)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("8"):
-            sudoku_ins(puzzle, 8)
-            tui.windraw_refresh(stddraw)
-            continue
-        if key == tui.askey("9"):
-            sudoku_ins(puzzle, 9)
-            tui.windraw_refresh(stddraw)
-            continue
+    stdwin.add_mapping(tui.askey("q"), stdwin.quit)
+    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
+
+    def on_reset():
+        stdscr.clear()
+        reset_statusbar()
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("C-L"), on_reset)
+
+    def on_set_big_grid():
+        puzzle.use_big_grid = True
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("+"), on_set_big_grid)
+    stdwin.add_mapping(tui.askey("="), on_set_big_grid)
+
+    def on_set_small_grid():
+        puzzle.use_big_grid = False
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("-"), on_set_small_grid)
+
+    def def_on_move_rel(y = 0, x = 0) -> Callable[[], None]:
+        def on_move():
+            if sudoku_move_rel_cursor(puzzle, y = y, x = x):
+                stdwin.refresh()
+        return on_move
+
+    mv_left = def_on_move_rel(x = -1)
+    stdwin.add_mapping(tui.askey("h"), mv_left)
+    stdwin.add_mapping(tui.askey("a"), mv_left)
+    stdwin.add_mapping(tui.askey("KEY_LEFT"), mv_left)
+
+    mv_right = def_on_move_rel(x = 1)
+    stdwin.add_mapping(tui.askey("l"), mv_right)
+    stdwin.add_mapping(tui.askey("d"), mv_right)
+    stdwin.add_mapping(tui.askey("KEY_RIGHT"), mv_right)
+
+    mv_down = def_on_move_rel(y = 1)
+    stdwin.add_mapping(tui.askey("j"), mv_down)
+    stdwin.add_mapping(tui.askey("s"), mv_down)
+    stdwin.add_mapping(tui.askey("KEY_DOWN"), mv_down)
+
+    mv_up = def_on_move_rel(y = -1)
+    stdwin.add_mapping(tui.askey("k"), mv_up)
+    stdwin.add_mapping(tui.askey("w"), mv_up)
+    stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
+
+    def def_on_move_abs(y: int | None = None, x: int | None = None) -> Callable[[], None]:
+        def on_move():
+            sudoku_move_abs_cursor(puzzle, y = y, x = x)
+            stdwin.refresh()
+        return on_move
+
+    mv_first = def_on_move_abs(x = 0)
+    stdwin.add_mapping(tui.askey("H"), mv_first)
+    stdwin.add_mapping(tui.askey("KEY_HOME"), mv_first)
+
+    mv_last = def_on_move_abs(x = 8)
+    stdwin.add_mapping(tui.askey("L"), mv_last)
+    stdwin.add_mapping(tui.askey("KEY_END"), mv_last)
+
+    mv_bottom = def_on_move_abs(y = 0)
+    stdwin.add_mapping(tui.askey("J"), mv_bottom)
+    stdwin.add_mapping(tui.askey("KEY_NPAGE"), mv_bottom)
+
+    mv_top = def_on_move_abs(y = 8)
+    stdwin.add_mapping(tui.askey("K"), mv_top)
+    stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
+
+    def on_delete():
+        sudoku_del(puzzle)
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("KEY_BACKSPACE"), on_delete)
+    stdwin.add_mapping(tui.askey("KEY_DC"), on_delete)
+    stdwin.add_mapping(tui.askey("."), on_delete)
+
+    def on_toggle_notes():
+        sudoku_toggle_note_mode(puzzle)
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("n"), on_toggle_notes)
+    stdwin.add_mapping(tui.askey("0"), on_toggle_notes)
+    stdwin.add_mapping(tui.askey("KEY_IC"), on_toggle_notes)
+
+    def def_on_digit(digit: int) -> Callable[[], None]:
+        def on_digit():
+            sudoku_ins(puzzle, digit)
+            stdwin.refresh()
+        return on_digit
+
+    for digit in range(1, 10):
+        stdwin.add_mapping(tui.askey(str(digit)), def_on_digit(digit))
+
+    stdwin.mainloop()
 
 if __name__ == "__main__":
     curses.wrapper(tui.start_curses, init_curses, main)
