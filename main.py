@@ -4,6 +4,7 @@
 # TODO
 
 - refine game controls
+- implement grid scrolling
 - implement puzzle generation
 - implement undo
 - implement line and box guides
@@ -14,7 +15,7 @@ import curses.ascii as cascii
 
 from dataclasses import dataclass, field, KW_ONLY
 from itertools import repeat
-from typing import Callable
+from typing import Callable, TypeVar
 
 font_l = [# {{{
           ("▐▛▀▜▌", "▐▙▞▜▌", "▐▙▄▟▌"), # 0
@@ -121,6 +122,36 @@ class GridDrawState:
 @dataclass(slots = True)
 class Cursor:
     cursor: tuple[int, int]
+
+ChildWindow = tuple[WindowDrawState, PadView | None]
+
+class MainWindow:
+    __slots__ = ("_stdscr", "children", "stdcurs")
+
+    def __init__(self, stdscr_: curses.window):
+        self._stdscr = stdscr_
+        self.children: list[ChildWindow] = []
+        self.stdcurs = Cursor((0, 0))
+
+    @property
+    def stdscr(self) -> curses.window:
+        return self._stdscr
+
+    @property
+    def stddraw(self) -> WindowDrawState:
+        return WindowDrawState(self.stdscr, self.on_draw)
+
+    def on_draw(self, _) -> bool:
+        self.stdscr.erase()
+        self.stdscr.noutrefresh()
+        for child in self.children:
+            windraw_noutrefresh(*child)
+
+        win_move_cursor(self.stdscr, self.stdcurs)
+        return False
+
+    def add_child(self, windraw: WindowDrawState, pv: PadView | None = None):
+        self.children.append((windraw, pv))
 
 def init_curses(stdscr):# {{{
     curses.raw()
@@ -333,22 +364,6 @@ def win_move_cursor(win: curses.window, cursor: Cursor):# {{{
     else:
         curses.curs_set(1)
         win.move(cy, cx)
-# }}}
-
-def stddraw_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
-    children = kwargs["children"]
-    cursor = kwargs["cursor"]
-    def on_draw(win: curses.window) -> bool:
-        win.erase()
-
-        win.noutrefresh()
-        for child in children:
-            windraw_noutrefresh(*child)
-
-        win_move_cursor(win, cursor)
-        return False
-
-    return on_draw
 # }}}
 
 SUDOKU_GRID_MARGIN = 5
@@ -586,10 +601,17 @@ def display_screen_size() -> str:# {{{
 EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
 PUZZLE_SOLUTION = ""
 
-def main(stdscr: curses.window):
-    init_curses(stdscr)
+T = TypeVar('T')
 
-    puzzle = grid_from_str(EXAMPLE_PUZZLE, provided = True)
+def start_curses(stdscr: curses.window, func: Callable[[MainWindow], T], *args, **kwargs) -> T:
+    init_curses(stdscr)
+    stdwin = MainWindow(stdscr)
+    return func(stdwin, *args, **kwargs)
+
+def main(stdwin: MainWindow):
+    puzzle: SudokuGrid = grid_from_str(EXAMPLE_PUZZLE, provided = True)
+    stddraw = stdwin.stddraw
+    stdscr = stdwin.stdscr
 
     prog = {
             "default_status_fn": sudoku_def_display_mode(puzzle),
@@ -600,10 +622,6 @@ def main(stdscr: curses.window):
 
     reset_statusbar = statusbar_def_reset(prog = prog)
 
-    stddraw = WindowDrawState(stdscr)
-    stdcurs = Cursor((0, 0))
-    children = []
-
     sudoku_grid = curses.newpad(100, 100)
     sudoku_view = PadView(sudoku_grid, (0, 0), (2, 0), SMALL_GRID_SIZE)
     sudoku_draw = WindowDrawState(sudoku_grid)
@@ -611,21 +629,19 @@ def main(stdscr: curses.window):
             pv = sudoku_view,
             prog = prog,
             reset_statusbar = reset_statusbar,
-            cursor = stdcurs
+            cursor = stdwin.stdcurs
             )
-    children.append((sudoku_draw, sudoku_view))
+    stdwin.add_child(sudoku_draw, sudoku_view)
 
     titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
     titlebar = WindowDrawState(titlebar_win)
     titlebar.on_draw = titlebar_def_draw()
-    children.append((titlebar,))
+    stdwin.add_child(titlebar)
 
     statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
     statusbar = WindowDrawState(statusbar_win)
     statusbar.on_draw = statusbar_def_draw(prog = prog)
-    children.append((statusbar,))
-
-    stddraw.on_draw = stddraw_def_draw(children = children, cursor = stdcurs)
+    stdwin.add_child(statusbar)
 
     windraw_refresh(stddraw)
 
@@ -729,6 +745,6 @@ def main(stdscr: curses.window):
             continue
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    curses.wrapper(start_curses, main)
 
 # vim: foldmethod=marker
