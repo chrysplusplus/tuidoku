@@ -1,3 +1,68 @@
+"""
+File: tui.py
+Author: chrysplusplus
+Date: 2026-06-18
+
+Rather than being a wrapper library around curses, this module is intended to
+complement it, providing actual support for Unicode character entry through the
+Key dataclass and its associated functions, as well as a very rudimentary event
+callback mainloop with the MainWindow class.
+
+Note that all of this is optional -- you can completely avoid using MainWindow
+if you don't need it, or you can subclass it and completely overhaul the key
+mapping system with your own. I don't want this library to dictate style, when
+function should really be the focus.
+
+Regarding the Unicode utf8_len function, my testing of this is admittedly
+limited. This came about because I was tired of having a non-US keyboard layout
+and curses.getstr reporting the wrong character. Because this is such a niche
+issue (or perhaps because of the decaying state of contemporary internet search
+results) it was incredibly hard to find information on this strange behaviour,
+and for a while I was using a non-blocking method cobbled together from blog
+posts and answers on stackoverflow, which worked, but was incredibly
+CPU-intensive. More recently, I was reading through the curses Python
+documenttion and started experimenting with the curses.getch function, which I
+had used in my non-blocking temporary solution without fully understanding what
+it did. I'll save the explanation for now, but it turns out that getch works
+the same whether the library is set to delay or nodelay (blocking and
+non-blocking, respectively), except that in the non-blocking context, getch
+returns -1 as a sentinel value for the end of a byte stream. In the blocking
+context, no such sentinel exists, which is why I thought it wasn't possible to
+parse Unicode input in this situation. However, getch actually returns each
+byte of a Unicode input on successive calls, though this behaviour isn't
+apparent in the "tutorial" mainloop key handling for curses, which led me to
+believe that the function truncated the whole codepoint to its final byte. The
+leading bytes actually get eaten by the mainloop, which then blocks on the next
+call to getch, so the observed previous value is the last byte of the previous
+input and the last byte only. Now I have realised this, I rewrote my input
+handling code to examine the value returned by getch and attempt to detect if
+it beyond ASCII range and calculate how many more calls to getch are required
+to obtain the rest of the Unicode input -- this is essentially a description of
+what utf8_len does.
+
+There are two ways to use MainWindow:
+
+• Obtain stdscr yourself, either through curses.initscr or curses.wrapper, and
+  then construct MainWindow with the stdscr -- technically, you could pass any
+  curses.window to this constructor, but this isn't tested.
+
+• Call curses.wrapper with start_curses, which lets you pass in your own
+  initialisation code and then the entry point for the program that interfaces
+  with the MainWindow object wrapping stdscr.
+
+The start_curses interface is designed to embody the philosophy that this
+module complements curses but does not wrap it. Not the difference between this
+
+>>> start_curses(init_fn, main_fn, cmd_args)
+
+and this
+
+>>> curses.wrapper(start_curses, init_fn, main_fn, cmd_args)
+
+While more verbose, it clearly communicates that knowledge of how to use the
+curses library is still required, only that using this library will help makes
+certain parts of that usage easier."""
+
 import curses
 import curses.ascii as cascii
 
