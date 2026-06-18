@@ -13,6 +13,7 @@
 import curses
 
 from dataclasses import dataclass
+from functools import partial
 from itertools import repeat
 from typing import Callable
 
@@ -198,8 +199,8 @@ def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
 # }}}
 
 ATTR_NORMAL = curses.A_NORMAL
-ATTR_PROV = None        # initialised by init_curses
-ATTR_NOTE_CURS = None   # initialised by init_curses
+ATTR_PROV: int      # initialised by init_curses
+ATTR_NOTE_CURS: int # initialised by init_curses
 def cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # {{{
     at_cursor = (y, x) == sudoku.cursor
     note_mode = sudoku.mode == SUDOKU_MODE_NOTE
@@ -293,30 +294,25 @@ def draw_small_grid(win: curses.window, grid_state: GridDrawState):# {{{
         win.addstr(cur_y, cur_x, digit, attr)
 # }}}
 
-def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
-    cursor = kwargs["cursor"]
-    def on_draw(win: curses.window) -> bool:
-        prog = kwargs['prog']
-        pv = kwargs['pv']
-
-        win.erase()
-        if is_small_screen(prog, kwargs['reset_statusbar']): return True
-
-        puzzle = prog.get("puzzle", None)
-        sy, _ = pv.desired_screen_start
-        if puzzle.use_big_grid:
-            draw_big_grid(win, GridDrawState(puzzle, pv, sy))
-            cursor.cursor = (-1, -1)
-
-        else:
-            cy, cx = scale_small_grid_coords(puzzle.cursor)
-            draw_small_grid(win, GridDrawState(puzzle, pv, sy))
-            sy, sx = pv.desired_screen_start
-            cursor.cursor = (cy + sy, cx + sx)
-
+def sudoku_draw(cursor: tui.Cursor, prog: dict, pv: tui.PadView, reset_statusbar: Callable[[], None], win: curses.window) -> bool:# {{{
+    win.erase()
+    if is_small_screen(prog, reset_statusbar):
         return True
 
-    return on_draw
+    puzzle = prog.get("puzzle", None)
+    assert puzzle is not None
+    sy, _ = pv.desired_screen_start
+    if puzzle.use_big_grid:
+        draw_big_grid(win, GridDrawState(puzzle, pv, sy))
+        cursor.cursor = (-1, -1)
+
+    else:
+        cy, cx = scale_small_grid_coords(puzzle.cursor)
+        draw_small_grid(win, GridDrawState(puzzle, pv, sy))
+        sy, sx = pv.desired_screen_start
+        cursor.cursor = (cy + sy, cx + sx)
+
+    return True
 # }}}
 
 def sudoku_move_abs_cursor(sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):# {{{
@@ -334,10 +330,12 @@ def sudoku_move_rel_cursor(sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> boo
 # }}}
 
 MODE_STRINGS = [# {{{
-        "-- NORMAL --", "-- NOTE --" ]# }}}
+        "-- NORMAL --", "-- NOTE --" ]
+MAX_MODE_STRING = len(MODE_STRINGS)
+# }}}
 
 def sudoku_def_display_mode(sudoku: SudokuGrid) -> Callable[[], str]:# {{{
-    return lambda: MODE_STRINGS[clamp(sudoku.mode, SUDOKU_MAX_MODE, 0)]
+    return lambda: MODE_STRINGS[clamp(sudoku.mode, MAX_MODE_STRING, 0)]
 # }}}
 
 # TODO refactor as Actions
@@ -377,37 +375,26 @@ def sudoku_toggle_note_mode(sudoku: SudokuGrid):# {{{
     sudoku.mode = SUDOKU_MODE_NORMAL if sudoku.mode == SUDOKU_MODE_NOTE else SUDOKU_MODE_NOTE
 # }}}
 
-def titlebar_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
-    def on_draw(win: curses.window) -> bool:
-        win.erase()
-        _, maxx = win.getmaxyx()
-        text = "SUDOKU"[:maxx + 1]
-        win.addstr(0, (maxx - len(text)) // 2, text)
-        return True
-
-    return on_draw
+def titlebar_draw(win: curses.window) -> bool:# {{{
+    win.erase()
+    _, maxx = win.getmaxyx()
+    text = "SUDOKU"[:maxx + 1]
+    win.addstr(0, (maxx - len(text)) // 2, text)
+    return True
 # }}}
 
-def statusbar_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
-    def on_draw(win: curses.window) -> bool:
-        prog = kwargs['prog']
-        status_fn = prog.get("status_fn", lambda: "")
-        win.mvwin(curses.LINES - 1, 0)
-        _, maxx = win.getmaxyx()
-        win.erase()
-        txt = status_fn()
-        win.addstr(txt[:maxx + 1])
-        return True
-
-    return on_draw
+def statusbar_draw(prog: dict, win: curses.window) -> bool:# {{{
+    status_fn = prog.get("status_fn", lambda: "")
+    win.mvwin(curses.LINES - 1, 0)
+    _, maxx = win.getmaxyx()
+    win.erase()
+    txt = status_fn()
+    win.addstr(txt[:maxx + 1])
+    return True
 # }}}
 
-def statusbar_def_reset(**kwargs) -> Callable[[], None]:# {{{
-    def on_reset():
-        prog = kwargs['prog']
-        prog['status_fn'] = prog.get("default_status_fn", None)
-
-    return on_reset
+def statusbar_reset(prog: dict):# {{{
+    prog['status_fn'] = prog.get("default_status_fn", None)
 # }}}
 
 def display_screen_size() -> str:# {{{
@@ -429,27 +416,22 @@ def main(stdwin: tui.MainWindow):
             }
     prog['status_fn'] = prog['default_status_fn']
 
-    reset_statusbar = statusbar_def_reset(prog = prog)
+    reset_statusbar = partial(statusbar_reset, prog)
 
     sudoku_grid = curses.newpad(100, 100)
     sudoku_view = tui.PadView(sudoku_grid, (0, 0), (2, 0), SMALL_GRID_SIZE)
-    sudoku_draw = tui.WindowDrawState(sudoku_grid)
-    sudoku_draw.on_draw = sudoku_def_draw(
-            pv = sudoku_view,
-            prog = prog,
-            reset_statusbar = reset_statusbar,
-            cursor = stdwin.stdcurs
-            )
-    stdwin.add_child(sudoku_draw, sudoku_view)
+    sudoku_windraw = tui.WindowDrawState(sudoku_grid)
+    sudoku_windraw.on_draw = partial(sudoku_draw, stdwin.stdcurs, prog, sudoku_view, reset_statusbar)
+    stdwin.add_child(sudoku_windraw, sudoku_view)
 
     titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
     titlebar = tui.WindowDrawState(titlebar_win)
-    titlebar.on_draw = titlebar_def_draw()
+    titlebar.on_draw = titlebar_draw
     stdwin.add_child(titlebar)
 
     statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
     statusbar = tui.WindowDrawState(statusbar_win)
-    statusbar.on_draw = statusbar_def_draw(prog = prog)
+    statusbar.on_draw = partial(statusbar_draw, prog)
     stdwin.add_child(statusbar)
 
     tui.windraw_refresh(stddraw)
@@ -479,51 +461,47 @@ def main(stdwin: tui.MainWindow):
 
     stdwin.add_mapping(tui.askey("-"), on_set_small_grid)
 
-    def def_on_move_rel(y = 0, x = 0) -> Callable[[], None]:
-        def on_move():
-            if sudoku_move_rel_cursor(puzzle, y = y, x = x):
-                stdwin.refresh()
-        return on_move
+    def on_move_rel(y = 0, x = 0):
+        if sudoku_move_rel_cursor(puzzle, y = y, x = x):
+            stdwin.refresh()
 
-    mv_left = def_on_move_rel(x = -1)
+    mv_left = partial(on_move_rel, x = -1)
     stdwin.add_mapping(tui.askey("h"), mv_left)
     stdwin.add_mapping(tui.askey("a"), mv_left)
     stdwin.add_mapping(tui.askey("KEY_LEFT"), mv_left)
 
-    mv_right = def_on_move_rel(x = 1)
+    mv_right = partial(on_move_rel, x = 1)
     stdwin.add_mapping(tui.askey("l"), mv_right)
     stdwin.add_mapping(tui.askey("d"), mv_right)
     stdwin.add_mapping(tui.askey("KEY_RIGHT"), mv_right)
 
-    mv_down = def_on_move_rel(y = 1)
+    mv_down = partial(on_move_rel, y = 1)
     stdwin.add_mapping(tui.askey("j"), mv_down)
     stdwin.add_mapping(tui.askey("s"), mv_down)
     stdwin.add_mapping(tui.askey("KEY_DOWN"), mv_down)
 
-    mv_up = def_on_move_rel(y = -1)
+    mv_up = partial(on_move_rel, y = -1)
     stdwin.add_mapping(tui.askey("k"), mv_up)
     stdwin.add_mapping(tui.askey("w"), mv_up)
     stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
 
-    def def_on_move_abs(y: int | None = None, x: int | None = None) -> Callable[[], None]:
-        def on_move():
-            sudoku_move_abs_cursor(puzzle, y = y, x = x)
-            stdwin.refresh()
-        return on_move
+    def on_move_abs(y: int | None = None, x: int | None = None):
+        sudoku_move_abs_cursor(puzzle, y = y, x = x)
+        stdwin.refresh()
 
-    mv_first = def_on_move_abs(x = 0)
+    mv_first = partial(on_move_abs, x = 0)
     stdwin.add_mapping(tui.askey("H"), mv_first)
     stdwin.add_mapping(tui.askey("KEY_HOME"), mv_first)
 
-    mv_last = def_on_move_abs(x = 8)
+    mv_last = partial(on_move_abs, x = 8)
     stdwin.add_mapping(tui.askey("L"), mv_last)
     stdwin.add_mapping(tui.askey("KEY_END"), mv_last)
 
-    mv_bottom = def_on_move_abs(y = 0)
+    mv_bottom = partial(on_move_abs, y = 0)
     stdwin.add_mapping(tui.askey("J"), mv_bottom)
     stdwin.add_mapping(tui.askey("KEY_NPAGE"), mv_bottom)
 
-    mv_top = def_on_move_abs(y = 8)
+    mv_top = partial(on_move_abs, y = 8)
     stdwin.add_mapping(tui.askey("K"), mv_top)
     stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
 
@@ -543,14 +521,12 @@ def main(stdwin: tui.MainWindow):
     stdwin.add_mapping(tui.askey("0"), on_toggle_notes)
     stdwin.add_mapping(tui.askey("KEY_IC"), on_toggle_notes)
 
-    def def_on_digit(digit: int) -> Callable[[], None]:
-        def on_digit():
-            sudoku_ins(puzzle, digit)
-            stdwin.refresh()
-        return on_digit
+    def on_digit(digit: int):
+        sudoku_ins(puzzle, digit)
+        stdwin.refresh()
 
     for digit in range(1, 10):
-        stdwin.add_mapping(tui.askey(str(digit)), def_on_digit(digit))
+        stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
     stdwin.mainloop()
 
