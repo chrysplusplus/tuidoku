@@ -125,8 +125,6 @@ def init_curses(stdscr):# {{{
     curses.raw()
     curses.use_default_colors()
 
-    stdscr.nodelay(True)
-
     # init colors
     assert curses.COLOR_PAIRS > 2
     curses.init_pair(1, curses.COLOR_GREEN, -1)
@@ -168,27 +166,63 @@ def windraw_refresh(windraw: WindowDrawState, pv: PadView | None = None):# {{{
     windraw_noutrefresh(windraw, pv)
     curses.doupdate()
 # }}}
-def key_from_bytes(xs: list[int]) -> Key:# {{{
+def utf8_len(byte0: int) -> int:# {{{
+    '''Return the expected length of a UTF-8 code point in bytes given the first byte
+
+    Note: this function does not decode the code point, nor does it check if the first
+    byte is valid; it just naively checks value ranges in the most significant four bits'''
+    assert byte0 < 0x100 and byte0 >= 0
+    if byte0 < 0x80:
+        return 1
+    if byte0 < 0xe0:
+        return 2
+    if byte0 < 0xf0:
+        return 3
+    else:
+        return 4
+# }}}
+def getkbytes(stdscr: curses.window) -> list[int]:# {{{
+    kbytes = []
+    key = stdscr.getch()
+    while key != -1:
+        kbytes.append(key)
+        key = stdscr.getch()
+    return kbytes
+# }}}
+def getkbytes_blocking(win: curses.window) -> list[int]:# {{{
+    byte0 = win.getch()
+    if byte0 > 0x100: return [byte0]
+    if byte0 == cascii.ESC:
+        return [byte0] + getkbytes_blocking(win)
+
+    kbytes = [byte0]
+    i = utf8_len(byte0) - 1
+    while i > 0:
+        kbytes.append(win.getch())
+        i -= 1
+    return kbytes
+# }}}
+def unctrl(byte: int) -> str:# {{{
+    return cascii.unctrl(byte)[1]
+# }}}
+def key_from_bytes(xs: list[int]) -> Key | None:# {{{
     assert len(xs) > 0
     x = xs[0]
-    solo = len(xs) == 1
-    if solo and cascii.isctrl(x):
-        return Key(cascii.unctrl(x)[1], ctrl = True)
-
-    if solo:
-        return Key(bytes(curses.keyname(x)).decode("utf-8"), special = x > 127)
-
+    if x > 0x80 and len(xs) == 1:
+        return Key(curses.keyname(x), special = True)
+    if x > 0x80:
+        try:
+            return Key(bytes(xs).decode("utf-8"))
+        except UnicodeDecodeError:
+            return None
     if x == cascii.ESC and cascii.isctrl(xs[1]):
-        return Key(cascii.unctrl(xs[1])[1], ctrl = True, alt = True)
-
+        return Key(unctrl(xs[1]), ctrl = True, alt = True)
     if x == cascii.ESC:
-        return Key(bytes(xs[1:]).decode("utf-8"), alt = True)
-
-    try:
-        return Key(bytes(xs).decode("utf-8"))
-
-    except ValueError:
-        return Key(f"UNK_{xs}")
+        return Key(chr(xs[1]), alt = True)
+    if cascii.isctrl(x):
+        return Key(unctrl(x), ctrl = True)
+    else:
+        return Key(chr(x))
 # }}}
 def askey(ch: str) -> Key:# {{{
     upper = ch.upper()
@@ -199,16 +233,8 @@ def askey(ch: str) -> Key:# {{{
     if upper.startswith("C-"):
         return Key(upper[2], ctrl = True)
     if upper.startswith("M-"):
-        return Key(upper[2], alt = True)
+        return Key(ch[2], alt = True)
     return Key(ch)
-# }}}
-def getkbytes(stdscr: curses.window) -> list[int]:# {{{
-    kbytes = []
-    key = stdscr.getch()
-    while key != -1:
-        kbytes.append(key)
-        key = stdscr.getch()
-    return kbytes
 # }}}
 def grid_from_str(s: str, provided: bool = False) -> SudokuGrid | None:# {{{
     grid = []
@@ -417,10 +443,10 @@ def sudoku_def_draw(**kwargs) -> Callable[[curses.window], bool]:# {{{
 
     return on_draw
 # }}}
-def sudoku_move_abs_cursor(sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):
+def sudoku_move_abs_cursor(sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):# {{{
     oldy, oldx = sudoku.cursor
     sudoku.cursor = (y if y is not None else oldy, x if x is not None else oldx)
-
+# }}}
 def sudoku_move_rel_cursor(sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> bool: # {{{
     '''Returns True if cursor changed, otherwise False'''
     oldy, oldx = sudoku.cursor
@@ -543,12 +569,13 @@ def main(stdscr: curses.window):
     windraw_refresh(stddraw)
 
     while True:
-        if len(kbytes := getkbytes(stdscr)) == 0: continue
+        kbytes = getkbytes_blocking(stdscr)
+        key = key_from_bytes(kbytes)
+        if key is None: continue
+
         if kbytes[0] == curses.KEY_RESIZE:
             windraw_refresh(stddraw)
             continue
-
-        key = key_from_bytes(kbytes)
         if key == askey("q"):
             break
         if key == askey("C-C"):
@@ -598,7 +625,7 @@ def main(stdscr: curses.window):
             sudoku_del(puzzle)
             windraw_refresh(stddraw)
             continue
-        if key == askey("n") or key == askey("0"):
+        if key == askey("n") or key == askey("0") or kbytes[0] == curses.KEY_IC:
             sudoku_toggle_note_mode(puzzle)
             windraw_refresh(stddraw)
             continue
