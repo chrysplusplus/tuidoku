@@ -11,11 +11,14 @@
 """
 
 import curses
-import curses.ascii as cascii
 
-from dataclasses import dataclass, field, KW_ONLY
+from dataclasses import dataclass
 from itertools import repeat
-from typing import Callable, TypeVar
+from typing import Callable
+
+import tui
+
+from util import clamp
 
 font_l = [# {{{
           ("▐▛▀▜▌", "▐▙▞▜▌", "▐▙▄▟▌"), # 0
@@ -77,26 +80,6 @@ L_nEsW, L_NeSw, L_NESW             = linechars[50], linechars[51], linechars[52]
 C_es, C_sw, C_nw, C_ne             = linechars[54], linechars[55], linechars[56], linechars[57]# }}}
 
 @dataclass(slots = True)
-class Key:
-    ch: str
-    _: KW_ONLY
-    ctrl: bool = False
-    alt: bool = False
-    special: bool = False
-
-@dataclass(slots = True)
-class PadView:
-    pad: curses.window
-    pad_start: tuple[int,int]
-    desired_screen_start: tuple[int,int]
-    desired_view_size: tuple[int,int]
-
-@dataclass(slots = True)
-class WindowDrawState:
-    win: curses.window
-    on_draw: Callable[[curses.window], bool] | None = None
-
-@dataclass(slots = True)
 class GridCell:
     num: int | None
     notes: tuple[int,...] = tuple()
@@ -116,42 +99,8 @@ class SudokuGrid:
 @dataclass(slots = True)
 class GridDrawState:
     puzzle: SudokuGrid
-    pv: PadView
+    pv: tui.PadView
     sy: int
-
-@dataclass(slots = True)
-class Cursor:
-    cursor: tuple[int, int]
-
-ChildWindow = tuple[WindowDrawState, PadView | None]
-
-class MainWindow:
-    __slots__ = ("_stdscr", "children", "stdcurs")
-
-    def __init__(self, stdscr_: curses.window):
-        self._stdscr = stdscr_
-        self.children: list[ChildWindow] = []
-        self.stdcurs = Cursor((0, 0))
-
-    @property
-    def stdscr(self) -> curses.window:
-        return self._stdscr
-
-    @property
-    def stddraw(self) -> WindowDrawState:
-        return WindowDrawState(self.stdscr, self.on_draw)
-
-    def on_draw(self, _) -> bool:
-        self.stdscr.erase()
-        self.stdscr.noutrefresh()
-        for child in self.children:
-            windraw_noutrefresh(*child)
-
-        win_move_cursor(self.stdscr, self.stdcurs)
-        return False
-
-    def add_child(self, windraw: WindowDrawState, pv: PadView | None = None):
-        self.children.append((windraw, pv))
 
 def init_curses(stdscr):# {{{
     curses.raw()
@@ -165,120 +114,6 @@ def init_curses(stdscr):# {{{
     global ATTR_PROV, ATTR_NOTE_CURS
     ATTR_PROV = curses.color_pair(1)
     ATTR_NOTE_CURS = curses.color_pair(2) | curses.A_REVERSE
-# }}}
-
-def clamp(val: int, max_: int, clamped: int | None = None) -> int:# {{{
-    if clamped is None: clamped = max_
-    return clamped if val > max_ else val
-# }}}
-
-def padview_clamp(pv: PadView) -> tuple[int,int,int,int,int,int]:# {{{
-    '''Provides clamped values for pv.refresh() or pv.noutrefresh()'''
-    py, px = pv.pad_start
-    sy, sx = pv.desired_screen_start
-    h, w = pv.desired_view_size
-    pmaxy, pmaxx = pv.pad.getmaxyx()
-    smaxy = curses.LINES - 1
-    smaxx = curses.COLS - 1
-
-    py = clamp(py, pmaxy, 0)
-    px = clamp(px, pmaxx, 0)
-    h = clamp(clamp(h, pmaxy - py), smaxy)
-    w = clamp(clamp(w, pmaxx - px), smaxx)
-    sy = clamp(sy, smaxy - h)
-    sx = clamp(sx, smaxx - w)
-    return py, px, sy, sx, sy + h, sx + w
-# }}}
-
-def windraw_noutrefresh(windraw: WindowDrawState, pv: PadView | None = None):# {{{
-    assert pv is None or id(windraw.win) == id(pv.pad)
-    dorefresh = windraw.on_draw(windraw.win) if windraw.on_draw is not None else True
-    if pv is None and dorefresh:
-        windraw.win.noutrefresh()
-    elif dorefresh:
-        windraw.win.noutrefresh(*padview_clamp(pv))
-# }}}
-
-def windraw_refresh(windraw: WindowDrawState, pv: PadView | None = None):# {{{
-    curses.update_lines_cols()
-    windraw_noutrefresh(windraw, pv)
-    curses.doupdate()
-# }}}
-
-def utf8_len(byte0: int) -> int:# {{{
-    '''Return the expected length of a UTF-8 code point in bytes given the first byte
-
-    Note: this function does not decode the code point, nor does it check if the first
-    byte is valid; it just naively checks value ranges in the most significant four bits'''
-    assert byte0 < 0x100 and byte0 >= 0
-    if byte0 < 0x80:
-        return 1
-    if byte0 < 0xe0:
-        return 2
-    if byte0 < 0xf0:
-        return 3
-    else:
-        return 4
-# }}}
-
-def getkbytes(stdscr: curses.window) -> list[int]:# {{{
-    kbytes = []
-    key = stdscr.getch()
-    while key != -1:
-        kbytes.append(key)
-        key = stdscr.getch()
-    return kbytes
-# }}}
-
-def getkbytes_blocking(win: curses.window) -> list[int]:# {{{
-    byte0 = win.getch()
-    if byte0 > 0x100: return [byte0]
-    if byte0 == cascii.ESC:
-        return [byte0] + getkbytes_blocking(win)
-
-    kbytes = [byte0]
-    i = utf8_len(byte0) - 1
-    while i > 0:
-        kbytes.append(win.getch())
-        i -= 1
-    return kbytes
-# }}}
-
-def unctrl(byte: int) -> str:# {{{
-    return cascii.unctrl(byte)[1]
-# }}}
-
-def key_from_bytes(xs: list[int]) -> Key | None:# {{{
-    assert len(xs) > 0
-    x = xs[0]
-    if x > 0x80 and len(xs) == 1:
-        return Key(curses.keyname(x), special = True)
-    if x > 0x80:
-        try:
-            return Key(bytes(xs).decode("utf-8"))
-        except UnicodeDecodeError:
-            return None
-    if x == cascii.ESC and cascii.isctrl(xs[1]):
-        return Key(unctrl(xs[1]), ctrl = True, alt = True)
-    if x == cascii.ESC:
-        return Key(chr(xs[1]), alt = True)
-    if cascii.isctrl(x):
-        return Key(unctrl(x), ctrl = True)
-    else:
-        return Key(chr(x))
-# }}}
-
-def askey(ch: str) -> Key:# {{{
-    upper = ch.upper()
-    c_m = upper.startswith("C-M-")
-    m_c = upper.startswith("M-C-")
-    if c_m or m_c:
-        return Key(upper[4], ctrl = True, alt = True)
-    if upper.startswith("C-"):
-        return Key(upper[2], ctrl = True)
-    if upper.startswith("M-"):
-        return Key(ch[2], alt = True)
-    return Key(ch)
 # }}}
 
 def grid_from_str(s: str, provided: bool = False) -> SudokuGrid | None:# {{{
@@ -347,25 +182,6 @@ SMALL_GRID = grid_lines(1, 3)
 SMALL_GRID_SIZE = (len(SMALL_GRID), len(SMALL_GRID[0]))
 SMALL_GRID_CELL_SIZE = (1, 1)
 
-def win_addlines(win: curses.window, lines: list[str]):# {{{
-    maxy, maxx = win.getmaxyx()
-    y = 0
-    for line in lines:
-        win.addstr(y, 0, line[:maxx + 1])
-        y += 1
-        if y > maxy:
-            break
-# }}}
-
-def win_move_cursor(win: curses.window, cursor: Cursor):# {{{
-    cy, cx = cursor.cursor
-    if cy < 0 or cy > curses.LINES - 1 or cx < 0 or cx > curses.COLS - 1:
-        curses.curs_set(0)
-    else:
-        curses.curs_set(1)
-        win.move(cy, cx)
-# }}}
-
 SUDOKU_GRID_MARGIN = 5
 def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
     draw_errmsg = "Screen too small to display grid"
@@ -425,7 +241,7 @@ def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
     _, w = grid_state.pv.desired_view_size
     grid_state.pv.desired_screen_start = (grid_state.sy, (curses.COLS - w) // 2)
 
-    win_addlines(win, LARGE_GRID)
+    tui.win_addlines(win, LARGE_GRID)
 
     cy, cx = grid_state.puzzle.cursor
 
@@ -466,7 +282,7 @@ def draw_small_grid(win: curses.window, grid_state: GridDrawState):# {{{
     grid_state.pv.desired_screen_start = (grid_state.sy, sx)
     grid_state.pv.desired_view_size = SMALL_GRID_SIZE
 
-    win_addlines(win, SMALL_GRID)
+    tui.win_addlines(win, SMALL_GRID)
 
     for i, cell in enumerate(grid_state.puzzle.grid):
         y, x = divmod(i, 9)
@@ -601,14 +417,7 @@ def display_screen_size() -> str:# {{{
 EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
 PUZZLE_SOLUTION = ""
 
-T = TypeVar('T')
-
-def start_curses(stdscr: curses.window, func: Callable[[MainWindow], T], *args, **kwargs) -> T:
-    init_curses(stdscr)
-    stdwin = MainWindow(stdscr)
-    return func(stdwin, *args, **kwargs)
-
-def main(stdwin: MainWindow):
+def main(stdwin: tui.MainWindow):
     puzzle: SudokuGrid = grid_from_str(EXAMPLE_PUZZLE, provided = True)
     stddraw = stdwin.stddraw
     stdscr = stdwin.stdscr
@@ -623,8 +432,8 @@ def main(stdwin: MainWindow):
     reset_statusbar = statusbar_def_reset(prog = prog)
 
     sudoku_grid = curses.newpad(100, 100)
-    sudoku_view = PadView(sudoku_grid, (0, 0), (2, 0), SMALL_GRID_SIZE)
-    sudoku_draw = WindowDrawState(sudoku_grid)
+    sudoku_view = tui.PadView(sudoku_grid, (0, 0), (2, 0), SMALL_GRID_SIZE)
+    sudoku_draw = tui.WindowDrawState(sudoku_grid)
     sudoku_draw.on_draw = sudoku_def_draw(
             pv = sudoku_view,
             prog = prog,
@@ -634,117 +443,117 @@ def main(stdwin: MainWindow):
     stdwin.add_child(sudoku_draw, sudoku_view)
 
     titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
-    titlebar = WindowDrawState(titlebar_win)
+    titlebar = tui.WindowDrawState(titlebar_win)
     titlebar.on_draw = titlebar_def_draw()
     stdwin.add_child(titlebar)
 
     statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-    statusbar = WindowDrawState(statusbar_win)
+    statusbar = tui.WindowDrawState(statusbar_win)
     statusbar.on_draw = statusbar_def_draw(prog = prog)
     stdwin.add_child(statusbar)
 
-    windraw_refresh(stddraw)
+    tui.windraw_refresh(stddraw)
 
     while True:
-        kbytes = getkbytes_blocking(stdscr)
-        key = key_from_bytes(kbytes)
+        kbytes = tui.getkbytes_blocking(stdscr)
+        key = tui.key_from_bytes(kbytes)
         if key is None: continue
 
         if kbytes[0] == curses.KEY_RESIZE:
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("q"):
+        if key == tui.askey("q"):
             break
-        if key == askey("C-C"):
+        if key == tui.askey("C-C"):
             break
-        if key == askey("C-L"):
+        if key == tui.askey("C-L"):
             stdscr.clear()
             reset_statusbar()
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("+") or key == askey("="):
+        if key == tui.askey("+") or key == tui.askey("="):
             puzzle.use_big_grid = True
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("-"):
+        if key == tui.askey("-"):
             puzzle.use_big_grid = False
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("h") or key == askey("a") or kbytes[0] == curses.KEY_LEFT:
-            if sudoku_move_rel_cursor(puzzle, x = -1): windraw_refresh(stddraw)
+        if key == tui.askey("h") or key == tui.askey("a") or kbytes[0] == curses.KEY_LEFT:
+            if sudoku_move_rel_cursor(puzzle, x = -1): tui.windraw_refresh(stddraw)
             continue
-        if key == askey("l") or key == askey("d") or kbytes[0] == curses.KEY_RIGHT:
-            if sudoku_move_rel_cursor(puzzle, x = 1): windraw_refresh(stddraw)
+        if key == tui.askey("l") or key == tui.askey("d") or kbytes[0] == curses.KEY_RIGHT:
+            if sudoku_move_rel_cursor(puzzle, x = 1): tui.windraw_refresh(stddraw)
             continue
-        if key == askey("j") or key == askey("s") or kbytes[0] == curses.KEY_DOWN:
-            if sudoku_move_rel_cursor(puzzle, y = 1): windraw_refresh(stddraw)
+        if key == tui.askey("j") or key == tui.askey("s") or kbytes[0] == curses.KEY_DOWN:
+            if sudoku_move_rel_cursor(puzzle, y = 1): tui.windraw_refresh(stddraw)
             continue
-        if key == askey("k") or key == askey("w") or kbytes[0] == curses.KEY_UP:
-            if sudoku_move_rel_cursor(puzzle, y = -1): windraw_refresh(stddraw)
+        if key == tui.askey("k") or key == tui.askey("w") or kbytes[0] == curses.KEY_UP:
+            if sudoku_move_rel_cursor(puzzle, y = -1): tui.windraw_refresh(stddraw)
             continue
-        if key == askey("H") or kbytes[0] == curses.KEY_HOME:
+        if key == tui.askey("H") or kbytes[0] == curses.KEY_HOME:
             sudoku_move_abs_cursor(puzzle, x = 0)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("L") or kbytes[0] == curses.KEY_END:
+        if key == tui.askey("L") or kbytes[0] == curses.KEY_END:
             sudoku_move_abs_cursor(puzzle, x = 8)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("J") or kbytes[0] == curses.KEY_NPAGE:
+        if key == tui.askey("J") or kbytes[0] == curses.KEY_NPAGE:
             sudoku_move_abs_cursor(puzzle, y = 8)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("K") or kbytes[0] == curses.KEY_PPAGE:
+        if key == tui.askey("K") or kbytes[0] == curses.KEY_PPAGE:
             sudoku_move_abs_cursor(puzzle, y = 0)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if kbytes[0] == curses.KEY_BACKSPACE or kbytes[0] == curses.KEY_DC or key == askey("."):
+        if kbytes[0] == curses.KEY_BACKSPACE or kbytes[0] == curses.KEY_DC or key == tui.askey("."):
             sudoku_del(puzzle)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("n") or key == askey("0") or kbytes[0] == curses.KEY_IC:
+        if key == tui.askey("n") or key == tui.askey("0") or kbytes[0] == curses.KEY_IC:
             sudoku_toggle_note_mode(puzzle)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
         # TODO refactor
-        if key == askey("1"):
+        if key == tui.askey("1"):
             sudoku_ins(puzzle, 1)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("2"):
+        if key == tui.askey("2"):
             sudoku_ins(puzzle, 2)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("3"):
+        if key == tui.askey("3"):
             sudoku_ins(puzzle, 3)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("4"):
+        if key == tui.askey("4"):
             sudoku_ins(puzzle, 4)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("5"):
+        if key == tui.askey("5"):
             sudoku_ins(puzzle, 5)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("6"):
+        if key == tui.askey("6"):
             sudoku_ins(puzzle, 6)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("7"):
+        if key == tui.askey("7"):
             sudoku_ins(puzzle, 7)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("8"):
+        if key == tui.askey("8"):
             sudoku_ins(puzzle, 8)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
-        if key == askey("9"):
+        if key == tui.askey("9"):
             sudoku_ins(puzzle, 9)
-            windraw_refresh(stddraw)
+            tui.windraw_refresh(stddraw)
             continue
 
 if __name__ == "__main__":
-    curses.wrapper(start_curses, main)
+    curses.wrapper(tui.start_curses, init_curses, main)
 
 # vim: foldmethod=marker
