@@ -21,6 +21,9 @@ import tui
 
 from util import clamp
 
+debug_show: bool = False
+debug_vals: dict = {}
+
 font_l = [# {{{
           ("▐▛▀▜▌", "▐▙▞▜▌", "▐▙▄▟▌"), # 0
           (" ▄█  ", "  █  ", " ▄█▄ "), # 1
@@ -382,6 +385,33 @@ def sudoku_toggle_note_mode(sudoku: SudokuGrid):# {{{
     sudoku.mode = SUDOKU_MODE_NORMAL if sudoku.mode == SUDOKU_MODE_NOTE else SUDOKU_MODE_NOTE
 # }}}
 
+def debug_screen_draw(pv: tui.PadView, win: curses.window) -> bool:# {{{
+    global debug_show, debug_vals
+    assert id(pv.pad) == id(win)
+    win.erase()
+    if debug_show:
+        maxy, maxx = win.getmaxyx()
+        maxx = min(maxx, curses.COLS - 1)
+        assert maxy > 2
+        win.addstr(0, 0, "Debug", ATTR_NORMAL)
+        y = 1
+        w = 6
+        for key, value in debug_vals.items():
+            line = f"{key}: {value}"[:maxx + 0]
+            w = max(w, len(line))
+            win.addstr(y, 0, line, ATTR_NORMAL)
+            y += 1
+            if y == maxy:
+                break
+
+        pv.desired_view_size = (y , w)
+
+    else:
+        pv.desired_view_size = (0, 0)
+
+    return True
+# }}}
+
 def titlebar_draw(win: curses.window) -> bool:# {{{
     win.erase()
     _, maxx = win.getmaxyx()
@@ -446,6 +476,12 @@ def main(stdwin: tui.MainWindow):
     titlebar.on_draw = titlebar_draw
     stdwin.add_child(titlebar)
 
+    debug_screen_win = curses.newpad(100, 100)
+    debug_screen_view = tui.PadView(debug_screen_win, (0, 0), (0, 0), (0, 0))
+    debug_screen = tui.WindowDrawState(debug_screen_win)
+    debug_screen.on_draw = partial(debug_screen_draw, debug_screen_view)
+    stdwin.add_child(debug_screen, debug_screen_view)
+
     statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
     statusbar = tui.WindowDrawState(statusbar_win)
     statusbar.on_draw = partial(statusbar_draw, appdata)
@@ -469,6 +505,13 @@ def main(stdwin: tui.MainWindow):
         stdwin.refresh()
 
     stdwin.add_mapping(tui.askey("C-L"), on_reset)
+
+    def on_debug_toggle():
+        global debug_show
+        debug_show = not debug_show
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
 
     def on_move_rel(y = 0, x = 0):
         if sudoku_move_rel_cursor(puzzle, y = y, x = x):
@@ -506,11 +549,11 @@ def main(stdwin: tui.MainWindow):
     stdwin.add_mapping(tui.askey("L"), mv_last)
     stdwin.add_mapping(tui.askey("KEY_END"), mv_last)
 
-    mv_bottom = partial(on_move_abs, y = 0)
+    mv_bottom = partial(on_move_abs, y = 8)
     stdwin.add_mapping(tui.askey("J"), mv_bottom)
     stdwin.add_mapping(tui.askey("KEY_NPAGE"), mv_bottom)
 
-    mv_top = partial(on_move_abs, y = 8)
+    mv_top = partial(on_move_abs, y = 0)
     stdwin.add_mapping(tui.askey("K"), mv_top)
     stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
 
