@@ -299,11 +299,10 @@ def askey(ch: str) -> Key:# {{{
     return Key(ch)
 # }}}
 
-def win_addlines(win: curses.window, lines: list[str]):# {{{
+def win_addlines(win: curses.window, lines: list[str], y: int = 0, x: int = 0):# {{{
     maxy, maxx = win.getmaxyx()
-    y = 0
     for line in lines:
-        win.addstr(y, 0, line[:maxx + 1])
+        win.addstr(y, x, line[:maxx + x + 1])
         y += 1
         if y > maxy:
             break

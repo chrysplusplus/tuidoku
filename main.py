@@ -94,14 +94,7 @@ SUDOKU_MAX_MODE    = 1
 class SudokuGrid:
     grid: list[GridCell]
     cursor: tuple[int, int] = (0, 0)
-    use_big_grid: bool = True
     mode: int = 0
-
-@dataclass(slots = True)
-class GridDrawState:
-    puzzle: SudokuGrid
-    pv: tui.PadView
-    sy: int
 
 def init_curses(stdscr):# {{{
     curses.raw()
@@ -184,16 +177,17 @@ SMALL_GRID_SIZE = (len(SMALL_GRID), len(SMALL_GRID[0]))
 SMALL_GRID_CELL_SIZE = (1, 1)
 
 SUDOKU_GRID_MARGIN = 5
-def is_small_screen(prog: dict, reset_fn: Callable[[], None]) -> bool:# {{{
+# TODO refactor error display
+def is_small_screen(appdata: dict, reset_fn: Callable[[], None]) -> bool:# {{{
     draw_errmsg = "Screen too small to display grid"
     if SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN:
-        prog["status_fn"] = lambda: draw_errmsg
-        prog["sudoku_draw_last_err"] = True
+        appdata["status_fn"] = lambda: draw_errmsg
+        appdata["sudoku_draw_last_err"] = True
         return True
 
-    if prog.get("sudoku_draw_last_err", False): # reset if resized screen is no longer too small
+    if appdata.get("sudoku_draw_last_err", False): # reset if resized screen is no longer too small
         reset_fn()
-        prog["sudoku_draw_last_err"] = False
+        appdata["sudoku_draw_last_err"] = False
 
     return False
 # }}}
@@ -236,20 +230,31 @@ def draw_padded_cell(win: curses.window, y: int, x: int, lines: list[str], attr:
     win.addstr(y + dy, x - 1, padline, attr)
 # }}}
 
-def draw_big_grid(win: curses.window, grid_state: GridDrawState):# {{{
-    CELL_H, CELL_W = LARGE_GRID_CELL_SIZE
-    grid_state.pv.desired_view_size = LARGE_GRID_SIZE
-    _, w = grid_state.pv.desired_view_size
-    grid_state.pv.desired_screen_start = (grid_state.sy, (curses.COLS - w) // 2)
+def resize_gridviews(bigpv: tui.PadView, smallpv: tui.PadView):# {{{
+    bigh, bigw_ = LARGE_GRID_SIZE
+    smallh, smallw = SMALL_GRID_SIZE
+    bigh = clamp(bigh, curses.LINES - 5)
+    bigw = clamp(bigw_ + smallw + 1, curses.COLS - 3)
+    sy = 2
+    bigsx = (curses.COLS - bigw) // 2
+    smallsx = bigsx + bigw_ + 1
+    bigpv.desired_screen_start = (sy, bigsx)
+    bigpv.desired_view_size = (bigh, bigw)
+    smallpv.desired_screen_start = (sy, smallsx)
+    smallpv.desired_view_size = (smallh, smallw)
+# }}}
 
+def draw_big_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
+    win = pv.pad
+    CELL_H, CELL_W = LARGE_GRID_CELL_SIZE
     tui.win_addlines(win, LARGE_GRID)
 
-    cy, cx = grid_state.puzzle.cursor
+    cy, cx = puzzle.cursor
 
-    for i, cell in enumerate(grid_state.puzzle.grid):
+    for i, cell in enumerate(puzzle.grid):
         y, x = divmod(i, 9)
         cur_y, cur_x = scale_big_grid_coords((y, x))
-        attr = cell_attr(y, x, cell, grid_state.puzzle)
+        attr = cell_attr(y, x, cell, puzzle)
 
         if cell.num is not None:
             digit = cell.num
@@ -277,41 +282,43 @@ def scale_small_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
     return (2 * y + 1, 4 * x + 2)
 # }}}
 
-def draw_small_grid(win: curses.window, grid_state: GridDrawState):# {{{
-    grid_state.pv.pad_start = (0, 0)
-    sx = (curses.COLS - SMALL_GRID_SIZE[1]) // 2
-    grid_state.pv.desired_screen_start = (grid_state.sy, sx)
-    grid_state.pv.desired_view_size = SMALL_GRID_SIZE
-
-    tui.win_addlines(win, SMALL_GRID)
-
-    for i, cell in enumerate(grid_state.puzzle.grid):
+def draw_small_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
+    win = pv.pad
+    tui.win_addlines(win, SMALL_GRID, x = 1)
+    for i, cell in enumerate(puzzle.grid):
         y, x = divmod(i, 9)
         cur_y, cur_x = scale_small_grid_coords((y, x))
         attr = ATTR_PROV if cell.provided else ATTR_NORMAL
         digit = str(cell.num) if cell.num is not None else ' '
-
-        win.addstr(cur_y, cur_x, digit, attr)
+        win.addstr(cur_y, cur_x + 1, digit, attr)
 # }}}
 
-def sudoku_draw(cursor: tui.Cursor, prog: dict, pv: tui.PadView, reset_statusbar: Callable[[], None], win: curses.window) -> bool:# {{{
+def big_sudoku_draw(appdata: dict, pv: tui.PadView, reset_statusbar: Callable[[], None], win: curses.window) -> bool:# {{{
+    assert id(win) == id(pv.pad)
     win.erase()
-    if is_small_screen(prog, reset_statusbar):
+    if is_small_screen(appdata, reset_statusbar):
         return True
 
-    puzzle = prog.get("puzzle", None)
+    puzzle = appdata.get("puzzle", None)
     assert puzzle is not None
-    sy, _ = pv.desired_screen_start
-    if puzzle.use_big_grid:
-        draw_big_grid(win, GridDrawState(puzzle, pv, sy))
-        cursor.cursor = (-1, -1)
+    draw_big_grid(pv, puzzle)
+    return True
+# }}}
 
-    else:
-        cy, cx = scale_small_grid_coords(puzzle.cursor)
-        draw_small_grid(win, GridDrawState(puzzle, pv, sy))
-        sy, sx = pv.desired_screen_start
-        cursor.cursor = (cy + sy, cx + sx)
+def small_sudoku_draw(appdata: dict, pv: tui.PadView, cursor: tui.Cursor, reset_statusbar: Callable[[], None], win: curses.window):# {{{
+    assert id(win) == id(pv.pad)
+    win.erase()
+    # TODO refactor to prevent this being called twice
+    if is_small_screen(appdata, reset_statusbar):
+        return True
 
+    puzzle = appdata.get("puzzle", None)
+    assert puzzle is not None
+
+    draw_small_grid(pv, puzzle)
+    cy, cx = scale_small_grid_coords(puzzle.cursor)
+    _, _, sy, sx, _, _ = tui.padview_clamp(pv)
+    cursor.cursor = (cy + sy, cx + sx + 1)
     return True
 # }}}
 
@@ -334,8 +341,8 @@ MODE_STRINGS = [# {{{
 MAX_MODE_STRING = len(MODE_STRINGS)
 # }}}
 
-def sudoku_def_display_mode(sudoku: SudokuGrid) -> Callable[[], str]:# {{{
-    return lambda: MODE_STRINGS[clamp(sudoku.mode, MAX_MODE_STRING, 0)]
+def sudoku_mode(sudoku: SudokuGrid) -> str:# {{{
+    return MODE_STRINGS[clamp(sudoku.mode, MAX_MODE_STRING, 0)]
 # }}}
 
 # TODO refactor as Actions
@@ -383,8 +390,8 @@ def titlebar_draw(win: curses.window) -> bool:# {{{
     return True
 # }}}
 
-def statusbar_draw(prog: dict, win: curses.window) -> bool:# {{{
-    status_fn = prog.get("status_fn", lambda: "")
+def statusbar_draw(appdata: dict, win: curses.window) -> bool:# {{{
+    status_fn = appdata.get("status_fn", lambda: "")
     win.mvwin(curses.LINES - 1, 0)
     _, maxx = win.getmaxyx()
     win.erase()
@@ -393,8 +400,8 @@ def statusbar_draw(prog: dict, win: curses.window) -> bool:# {{{
     return True
 # }}}
 
-def statusbar_reset(prog: dict):# {{{
-    prog['status_fn'] = prog.get("default_status_fn", None)
+def statusbar_reset(appdata: dict):# {{{
+    appdata['status_fn'] = appdata.get("default_status_fn", None)
 # }}}
 
 def display_screen_size() -> str:# {{{
@@ -409,20 +416,30 @@ def main(stdwin: tui.MainWindow):
     stddraw = stdwin.stddraw
     stdscr = stdwin.stdscr
 
-    prog = {
-            "default_status_fn": sudoku_def_display_mode(puzzle),
+    stdwin.stdcurs.cursor = (-1, -1)
+
+    appdata = {
+            "default_status_fn": partial(sudoku_mode, puzzle),
             "sudoku_draw_last_err": False,
             "puzzle": puzzle,
             }
-    prog['status_fn'] = prog['default_status_fn']
+    appdata['status_fn'] = appdata['default_status_fn']
 
-    reset_statusbar = partial(statusbar_reset, prog)
+    reset_statusbar = partial(statusbar_reset, appdata)
 
-    sudoku_grid = curses.newpad(100, 100)
-    sudoku_view = tui.PadView(sudoku_grid, (0, 0), (2, 0), SMALL_GRID_SIZE)
-    sudoku_windraw = tui.WindowDrawState(sudoku_grid)
-    sudoku_windraw.on_draw = partial(sudoku_draw, stdwin.stdcurs, prog, sudoku_view, reset_statusbar)
-    stdwin.add_child(sudoku_windraw, sudoku_view)
+    big_sudoku_win = curses.newpad(100, 100)
+    big_sudoku_view = tui.PadView(big_sudoku_win, (0, 0), (2, 0), (0, 0))
+    big_sudoku = tui.WindowDrawState(big_sudoku_win)
+    big_sudoku.on_draw = partial(big_sudoku_draw, appdata, big_sudoku_view, reset_statusbar)
+    stdwin.add_child(big_sudoku, big_sudoku_view)
+
+    small_sudoku_win = curses.newpad(50, 50)
+    small_sudoku_view = tui.PadView(small_sudoku_win, (0, 0), (2, 0), (0, 0))
+    small_sudoku = tui.WindowDrawState(small_sudoku_win)
+    small_sudoku.on_draw = partial(small_sudoku_draw, appdata, small_sudoku_view, stdwin.stdcurs, reset_statusbar)
+    stdwin.add_child(small_sudoku, small_sudoku_view)
+
+    resize_gridviews(big_sudoku_view, small_sudoku_view)
 
     titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
     titlebar = tui.WindowDrawState(titlebar_win)
@@ -431,12 +448,17 @@ def main(stdwin: tui.MainWindow):
 
     statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
     statusbar = tui.WindowDrawState(statusbar_win)
-    statusbar.on_draw = partial(statusbar_draw, prog)
+    statusbar.on_draw = partial(statusbar_draw, appdata)
     stdwin.add_child(statusbar)
 
     tui.windraw_refresh(stddraw)
 
-    stdwin.add_mapping(tui.askey("KEY_RESIZE"), stdwin.refresh)
+    def on_resize():
+        curses.update_lines_cols()
+        resize_gridviews(big_sudoku_view, small_sudoku_view)
+        stdwin.refresh()
+
+    stdwin.add_mapping(tui.askey("KEY_RESIZE"), on_resize)
 
     stdwin.add_mapping(tui.askey("q"), stdwin.quit)
     stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
@@ -447,19 +469,6 @@ def main(stdwin: tui.MainWindow):
         stdwin.refresh()
 
     stdwin.add_mapping(tui.askey("C-L"), on_reset)
-
-    def on_set_big_grid():
-        puzzle.use_big_grid = True
-        stdwin.refresh()
-
-    stdwin.add_mapping(tui.askey("+"), on_set_big_grid)
-    stdwin.add_mapping(tui.askey("="), on_set_big_grid)
-
-    def on_set_small_grid():
-        puzzle.use_big_grid = False
-        stdwin.refresh()
-
-    stdwin.add_mapping(tui.askey("-"), on_set_small_grid)
 
     def on_move_rel(y = 0, x = 0):
         if sudoku_move_rel_cursor(puzzle, y = y, x = x):
