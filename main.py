@@ -3,6 +3,7 @@
 """
 # TODO
 
+- add reset command
 - refine game controls
 - implement grid scrolling
 - implement puzzle generation
@@ -325,17 +326,64 @@ def small_sudoku_draw(appdata: dict, pv: tui.PadView, cursor: tui.Cursor, reset_
     return True
 # }}}
 
-def sudoku_move_abs_cursor(sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):# {{{
-    oldy, oldx = sudoku.cursor
-    sudoku.cursor = (y if y is not None else oldy, x if x is not None else oldx)
+def padview_bounding_box(pv: tui.PadView) -> tuple[int, int, int, int]:# {{{
+    py, px, sy, sx, msy, msx = tui.padview_clamp(pv)
+    mpy = py + msy - sy
+    mpx = px + msx - sx
+    return py, px, mpy, mpx
 # }}}
 
-def sudoku_move_rel_cursor(sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> bool: # {{{
+def big_gridview_bounding_box(bigpv: tui.PadView, smallpv: tui.PadView) -> tuple[int, int, int, int]:# {{{
+    by, bx, mby, mbx = padview_bounding_box(bigpv)
+    _, _, _, sx, _, _ = tui.padview_clamp(smallpv)
+    mbx = min(mbx, sx + bx - 1)
+    return by, bx, mby, mbx
+# }}}
+
+def big_sudoku_grid_cell_bounding_box(coords: tuple[int, int]) -> tuple[int, int, int, int]:# {{{
+    cy, cx = scale_big_grid_coords(coords)
+    ch, cw = LARGE_GRID_CELL_SIZE
+    cy = cy - 2
+    cx = cx - 3
+    mcy = cy + ch + 3
+    mcx = cx + cw + 4
+    return cy, cx, mcy, mcx
+# }}}
+
+def nudge_coords_into_view(bigpv: tui.PadView, smallpv: tui.PadView, coords: tuple[int, int]):# {{{
+    py, px, mpy, mpx = big_gridview_bounding_box(bigpv, smallpv)
+    cy, cx, mcy, mcx = big_sudoku_grid_cell_bounding_box(coords)
+
+    nudgey = 0
+    if cy < py:
+        nudgey = cy - py
+    elif mcy > mpy:
+        nudgey = mcy - mpy
+
+    nudgex = 0
+    if cx < px:
+        nudgex = cx - px
+    elif mcx > mpx:
+        nudgex = mcx - mpx
+
+    bigpv.pad_start = (py + nudgey, px + nudgex)
+# }}}
+
+def sudoku_move_abs_cursor(bigpv: tui.PadView, smallpv: tui.PadView, sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):# {{{
+    oldy, oldx = sudoku.cursor
+    newy = y if y is not None else oldy
+    newx = x if x is not None else oldx
+    sudoku.cursor = (newy, newx)
+    nudge_coords_into_view(bigpv, smallpv, (newy, newx))
+# }}}
+
+def sudoku_move_rel_cursor(bigpv: tui.PadView, smallpv: tui.PadView, sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> bool: # {{{
     '''Returns True if cursor changed, otherwise False'''
     oldy, oldx = sudoku.cursor
     newy = (oldy + y) % 9
     newx = (oldx + x) % 9
     sudoku.cursor = (newy, newx)
+    nudge_coords_into_view(bigpv, smallpv, (newy, newx))
     return (oldy, oldx) != (newy, newx)
 # }}}
 
@@ -514,7 +562,7 @@ def main(stdwin: tui.MainWindow):
     stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
 
     def on_move_rel(y = 0, x = 0):
-        if sudoku_move_rel_cursor(puzzle, y = y, x = x):
+        if sudoku_move_rel_cursor(big_sudoku_view, small_sudoku_view, puzzle, y = y, x = x):
             stdwin.refresh()
 
     mv_left = partial(on_move_rel, x = -1)
@@ -538,7 +586,7 @@ def main(stdwin: tui.MainWindow):
     stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
 
     def on_move_abs(y: int | None = None, x: int | None = None):
-        sudoku_move_abs_cursor(puzzle, y = y, x = x)
+        sudoku_move_abs_cursor(big_sudoku_view, small_sudoku_view, puzzle, y = y, x = x)
         stdwin.refresh()
 
     mv_first = partial(on_move_abs, x = 0)
