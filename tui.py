@@ -159,6 +159,8 @@ class MainWindow:
         self.is_running = False
 
     def mainloop(self):
+        '''NOTE: May raise KeyboardInterrupt in certain terminal modes.'''
+
         self.is_running = True
         while self.is_running:
             kbytes = self._getkbytes(self._stdscr)
@@ -218,18 +220,23 @@ def utf8_len(byte0: int) -> int:# {{{
         return 4
 # }}}
 
-def getkbytes(stdscr: curses.window) -> list[int]:# {{{
+IDLE_KEY_NAME = "IDLE"
+IDLE_KEY = Key(IDLE_KEY_NAME, special = True)
+
+def getkbytes(win: curses.window) -> list[int]:# {{{
     kbytes = []
-    key = stdscr.getch()
+    key = win.getch()
+    kbytes.append(key)
     while key != -1:
+        key = win.getch()
         kbytes.append(key)
-        key = stdscr.getch()
     return kbytes
 # }}}
 
 def getkbytes_blocking(win: curses.window) -> list[int]:# {{{
     byte0 = win.getch()
     assert byte0 < curses.KEY_MAX
+    if byte0 == -1: return [byte0] # this can happen when halfdelay mode is set
     if byte0 >= curses.KEY_MIN: return [byte0]
     if byte0 == cascii.ESC:
         return [byte0] + getkbytes_blocking(win)
@@ -243,19 +250,23 @@ def getkbytes_blocking(win: curses.window) -> list[int]:# {{{
 # }}}
 
 def unctrl(byte: int) -> str:# {{{
+    '''Unwraps curses' '^C' to 'C'; used for constructing Key objects'''
     return cascii.unctrl(byte)[1]
 # }}}
 
 def key_from_bytes(xs: list[int]) -> Key | None:# {{{
     assert len(xs) > 0
     x = xs[0]
+    xs = xs[:-1] if xs[-1] == -1 else xs
+    if x == -1:
+        return IDLE_KEY
     if x >= curses.KEY_MIN and len(xs) == 1:
         return Key(curses.keyname(x), special = True)
     if x > 0x80:
         try:
             return Key(bytes(xs).decode("utf-8"))
         except UnicodeDecodeError:
-            return None
+            return None # could log, but I don't currently have a mechanism for that TODO maybe ???
     if x == cascii.ESC and cascii.isctrl(xs[1]):
         return Key(unctrl(xs[1]), ctrl = True, alt = True)
     if x == cascii.ESC:
@@ -269,6 +280,8 @@ def key_from_bytes(xs: list[int]) -> Key | None:# {{{
 SPECIAL_KEYS = tuple(m for m in dir(curses) if m.startswith("KEY_"))
 
 def askey(ch: str) -> Key:# {{{
+    if ch == IDLE_KEY_NAME:
+        return IDLE_KEY
     if ch in SPECIAL_KEYS:
         return Key(curses.keyname(getattr(curses, ch)), special = True)
     if ch.startswith("KEY_"):
