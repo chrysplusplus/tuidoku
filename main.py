@@ -114,7 +114,7 @@ def init_curses(stdscr):# {{{
 
     global ATTR_PROV, ATTR_NOTE_CURS
     ATTR_PROV = curses.color_pair(1)
-    ATTR_NOTE_CURS = curses.color_pair(2) | curses.A_REVERSE
+    ATTR_NOTE_CURS = curses.color_pair(2)
 # }}}
 
 def grid_from_str(s: str, provided: bool = False) -> SudokuGrid | None:# {{{
