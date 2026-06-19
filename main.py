@@ -20,7 +20,7 @@ from typing import Callable
 
 import tui
 
-from util import clamp
+from util import clamp, set_cursor_shape
 
 debug_show: bool = False
 debug_vals: dict = {}
@@ -100,7 +100,7 @@ class SudokuGrid:
     cursor: tuple[int, int] = (0, 0)
     mode: int = 0
 
-def init_curses(stdscr):# {{{
+def init_curses(stdscr: curses.window):# {{{
     curses.raw()
     curses.use_default_colors()
 
@@ -199,7 +199,8 @@ def is_small_screen(appdata: dict, reset_fn: Callable[[], None]) -> bool:# {{{
 ATTR_NORMAL = curses.A_NORMAL
 ATTR_PROV: int      # initialised by init_curses
 ATTR_NOTE_CURS: int # initialised by init_curses
-def cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # {{{
+
+def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # {{{
     at_cursor = (y, x) == sudoku.cursor
     note_mode = sudoku.mode == SUDOKU_MODE_NOTE
 
@@ -258,7 +259,7 @@ def draw_big_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
     for i, cell in enumerate(puzzle.grid):
         y, x = divmod(i, 9)
         cur_y, cur_x = scale_big_grid_coords((y, x))
-        attr = cell_attr(y, x, cell, puzzle)
+        attr = big_cell_attr(y, x, cell, puzzle)
 
         if cell.num is not None:
             digit = cell.num
@@ -281,6 +282,21 @@ def draw_big_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
             draw_padded_cell(win, cur_y, cur_x, lines, attr)
 # }}}
 
+def small_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # {{{
+    at_cursor = (y, x) == sudoku.cursor
+    note_mode = sudoku.mode == SUDOKU_MODE_NOTE
+    has_notes = len(cell.notes) != 0
+
+    if cell.provided:
+        return ATTR_PROV
+    elif note_mode and at_cursor:
+        return ATTR_NOTE_CURS
+    elif has_notes:
+        return ATTR_NOTE_CURS
+    else:
+        return ATTR_NORMAL
+# }}}
+
 def scale_small_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
     y, x = coords
     return (2 * y + 1, 4 * x + 2)
@@ -292,8 +308,12 @@ def draw_small_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
     for i, cell in enumerate(puzzle.grid):
         y, x = divmod(i, 9)
         cur_y, cur_x = scale_small_grid_coords((y, x))
-        attr = ATTR_PROV if cell.provided else ATTR_NORMAL
-        digit = str(cell.num) if cell.num is not None else ' '
+        attr = small_cell_attr(y, x, cell, puzzle)
+        digit = ' '
+        if cell.num is not None:
+            digit = str(cell.num)
+        elif len(cell.notes) != 0:
+            digit = 'n'
         win.addstr(cur_y, cur_x + 1, digit, attr)
 # }}}
 
@@ -631,6 +651,7 @@ def main(stdwin: tui.MainWindow):
     stdwin.mainloop()
 
 if __name__ == "__main__":
+    set_cursor_shape()
     curses.wrapper(tui.start_curses, init_curses, main)
 
 # vim: foldmethod=marker
