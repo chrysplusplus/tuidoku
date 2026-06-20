@@ -297,6 +297,8 @@ def small_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: 
 
 def scale_small_grid_coords(coords: tuple[int, int]) -> tuple[int, int]:# {{{
     y, x = coords
+    if y < 0 or y > 8 or x < 0 or x > 8:
+        return (-1, -1)
     return (2 * y + 1, 4 * x + 2)
 # }}}
 
@@ -339,8 +341,9 @@ def small_sudoku_draw(appdata: dict, pv: tui.PadView, cursor: tui.Cursor, reset_
 
     draw_small_grid(pv, puzzle)
     cy, cx = scale_small_grid_coords(puzzle.cursor)
-    _, _, sy, sx, _, _ = tui.padview_clamp(pv)
-    cursor.cursor = (cy + sy, cx + sx + 1)
+    if cy > 0 and cx > 0:
+        _, _, sy, sx, _, _ = tui.padview_clamp(pv)
+        cursor.cursor = (cy + sy, cx + sx + 1)
     return True
 # }}}
 
@@ -562,8 +565,9 @@ def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
 
 # }}}
 
-def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_mode):
+def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_cursor: tuple[int, int], restore_mode: int):
     appdata["cursor_fn"] = on_move_sudoku_cursor
+    puzzle.cursor = restore_cursor
     puzzle.mode = restore_mode
 
 def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], appdata: dict):# {{{
@@ -616,15 +620,16 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
     on_post_restore = partial(sudoku_restore, stdwin, on_move_sudoku_cursor, puzzle, appdata)
 
     def on_quit():
-        # TODO disable and restore small grid cursor
+        restore_cursor = puzzle.cursor
         restore_mode = puzzle.mode
+        puzzle.cursor = (-1, -1)
         puzzle.mode = 0
-        on_overlay_confirm(partial(on_post_restore, restore_mode), "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
+        on_overlay_confirm(partial(on_post_restore, restore_cursor, restore_mode), "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
 
     stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
-def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
+def confirm_draw(pv: tui.PadView, cursor: tui.Cursor, appdata: dict, win: curses.window):# {{{
     overlay: Overlay = appdata.get("overlay", None)
     assert overlay is not None
     win.erase()
@@ -636,7 +641,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
     info = [line[:maxx] for line in overlay.info]
 
     h = len(info) + 3 + (padding * 2)
-    w = max(len(msg), max(len(line) for line in info)) + 2
+    w = max(len(msg), max(len(line) for line in info)) + (padding * 2)
 
     tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
     win.addstr(padding, (w - len(msg)) // 2, msg, ATTR_NORMAL)
@@ -649,6 +654,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
 
     rendered = []
     rendered_width = 0
+    rendered_starts = []
     for index, item in enumerate(overlay.items):
         text = item.text
         if overlay.selection == index and text[0] == '&':
@@ -657,6 +663,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             rendered.append((text[1], ATTR_UNDER))
             rendered.append((text[2:], ATTR_NORMAL))
             rendered.append(cursor_post)
+            rendered_starts.append(rendered_width)
             rendered_width += len(text) + 3
 
         elif overlay.selection == index:
@@ -664,6 +671,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             rendered.append(cursor_pre)
             rendered.append((text, ATTR_NORMAL))
             rendered.append(cursor_post)
+            rendered_starts.append(rendered_width)
             rendered_width += len(text) + 4
 
         elif text[0] == '&':
@@ -672,6 +680,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             rendered.append((text[1], ATTR_UNDER))
             rendered.append((text[2:], ATTR_NORMAL))
             rendered.append(nocurs_post)
+            rendered_starts.append(rendered_width)
             rendered_width += len(text) + 3
 
         else:
@@ -680,6 +689,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             rendered.append(nocurs_pre)
             rendered.append((text, ATTR_NORMAL))
             rendered.append(nocurs_post)
+            rendered_starts.append(rendered_width)
             rendered_width += len(text) + 4
 
     y = padding + 2
@@ -700,8 +710,12 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             win.addstr(y, x, text, attr)
             x += len(text)
 
+    sy = (curses.LINES - h) // 2
+    sx = (curses.COLS - w) // 2
     pv.desired_view_size = (h, w - 1)
-    pv.desired_screen_start = ((curses.LINES - h) // 2, (curses.COLS - w) // 2)
+    pv.desired_screen_start = (sy, sx)
+    selection = overlay.selection
+    cursor.cursor = (sy + y, sx + rendered_starts[selection] + (gaplen * (selection + 1)) + 3)
     return True
 # }}}
 
@@ -759,7 +773,7 @@ def overlay_confirm(stdwin: tui.MainWindow, windraw: tui.WindowDrawState, pv: tu
         overlay.info = info
 
     appdata["overlay"] = overlay
-    windraw.on_draw = partial(confirm_draw, pv, appdata)
+    windraw.on_draw = partial(confirm_draw, pv, stdwin.stdcurs, appdata)
 
     if on_map is not None:
         on_map()
