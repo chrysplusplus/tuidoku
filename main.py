@@ -16,12 +16,12 @@ import collections
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, KW_ONLY
-from functools import partial, Placeholder
+from functools import partial
 from itertools import repeat
 
 import tui
 
-from util import clamp, pad_text, set_cursor_shape
+from util import clamp, pad_text, set_cursor_shape, Invoke
 from tui import (
         L_ew, L_ns,
         L_es, L_sw, L_ne, L_nw,
@@ -561,12 +561,11 @@ def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
 
 # }}}
 
-# TODO call
-def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid):
+def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict):
     appdata["cursor_fn"] = on_move_sudoku_cursor
-    puzzle.mode = 0
+    puzzle.mode = 1
 
-def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay]):# {{{
+def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], appdata: dict):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
     appdata["cursor_fn"] = on_move_sudoku_cursor
 
@@ -613,12 +612,14 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
     for digit in range(1, 10):
         stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
-    # TODO refactoring
-    #def on_quit():
-    #    puzzle.mode = 0 # TODO figure out how to restore this
-    #    on_overlay_confirm("Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lost any progress you made."])
+    on_post_restore = partial(sudoku_restore, stdwin, on_move_sudoku_cursor, puzzle, appdata)
 
-    #stdwin.add_mapping(tui.askey("q"), on_quit)
+    def on_quit():
+        # TODO disable and restore small grid cursor
+        puzzle.mode = 0
+        on_overlay_confirm(on_post_restore, "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
+
+    stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
 def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
@@ -729,13 +730,13 @@ def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]
     return accel_keys
 # }}}
 
-def overlay_confirm(stdwin: tui.MainWindow, winddraw: WindowDrawState, pv: tui.PadView, post_restore: Callable[[], None], appdata: dict, msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[tui.MainWindow], None] | None = None) -> Overlay:# {{{
+def overlay_confirm(stdwin: tui.MainWindow, windraw: tui.WindowDrawState, pv: tui.PadView, appdata: dict, post_restore: Callable[[], None], msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[], None] | None = None) -> Overlay:# {{{
     '''items are tuples of (text, callback) or (text,), the latter of which
     will assigned the callback to quit the overlay and restore the display
 
     Calls stdwin.refresh()'''
 
-    assert winddraw.ondraw is None
+    assert windraw.on_draw is None
     dp = tui.DisplayRestore(stdwin, windraw, pv, post_restore)
     stdwin.keymap = collections.OrderedDict()
     appdata["cursor_fn"] = partial(confirm_move_cursor, appdata)
@@ -759,7 +760,7 @@ def overlay_confirm(stdwin: tui.MainWindow, winddraw: WindowDrawState, pv: tui.P
     windraw.on_draw = partial(confirm_draw, pv, appdata)
 
     if on_map is not None:
-        on_map(stdwin)
+        on_map()
 
     on_select = partial(confirm_select_cursor, appdata)
     stdwin.add_mapping(tui.askey("KEY_ENTER"), on_select)
@@ -830,15 +831,17 @@ def main(stdwin: tui.MainWindow):
 
     tui.windraw_refresh(stddraw)
 
-    #(msg: str, * items, selection: int = -1) -> Overlay:
-    # TODO add on_map
-    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, Placeholder, appdata)
+    map_window_mappings = partial(window_mappings, stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
+    map_cursor_mappings = partial(cursor_mappings, stdwin, appdata)
 
-    window_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
-    cursor_mappings(stdwin, appdata)
-    sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm)
+    map_base_mappings = Invoke(map_window_mappings).then(map_cursor_mappings)
 
-    #stdwin.add_mapping(tui.askey("q"), stdwin.quit)
+    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, appdata, on_map = map_base_mappings)
+
+    map_base_mappings()
+    sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm, appdata)
+
+    # TODO implement safety catch for Ctrl-C
     stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
 
     stdwin.mainloop()
