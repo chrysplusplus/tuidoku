@@ -239,19 +239,8 @@ SMALL_GRID_SIZE = (len(SMALL_GRID), len(SMALL_GRID[0]))
 SMALL_GRID_CELL_SIZE = (1, 1)
 
 SUDOKU_GRID_MARGIN = 5
-# TODO refactor error display
-def is_small_screen(appdata: dict, reset_fn: Callable[[], None]) -> bool:# {{{
-    draw_errmsg = "Screen too small to display grid"
-    if SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN:
-        appdata["status"] = lambda: draw_errmsg
-        appdata["sudoku_draw_last_err"] = True
-        return True
-
-    if appdata.get("sudoku_draw_last_err", False): # reset if resized screen is no longer too small
-        reset_fn()
-        appdata["sudoku_draw_last_err"] = False
-
-    return False
+def is_small_screen() -> bool:# {{{
+    return SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN
 # }}}
 
 ATTR_NORMAL = curses.A_NORMAL
@@ -383,8 +372,15 @@ def big_sudoku_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
     pv = app.big_sudoku_view
     assert id(win) == id(pv.pad)
     win.erase()
-    if is_small_screen(app.appdata, app.reset_statusbar):
+    if is_small_screen():
+        app.appdata["small_screen"] = True
+        app.appdata["status"] = "Screen too small to display grid"
         return True
+
+    elif app.appdata.get("small_screen", False):
+        # clear previous small screen report
+        app.appdata["small_screen"] = False
+        app.reset_statusbar()
 
     puzzle = app.appdata.get("puzzle", None)
     assert puzzle is not None
@@ -396,8 +392,7 @@ def small_sudoku_draw(app: SudokuApp, win: curses.window):# {{{
     pv = app.small_sudoku_view
     assert id(win) == id(pv.pad)
     win.erase()
-    # TODO refactor to prevent this being called twice
-    if is_small_screen(app.appdata, app.reset_statusbar):
+    if app.appdata.get("small_screen", False):
         return True
 
     puzzle = app.appdata.get("puzzle", None)
