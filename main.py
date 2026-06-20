@@ -16,7 +16,7 @@ import collections
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, KW_ONLY
-from functools import partial
+from functools import partial, Placeholder
 from itertools import repeat
 
 import tui
@@ -561,7 +561,15 @@ def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
 
 # }}}
 
+# TODO call
+def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid):
+    appdata["cursor_fn"] = on_move_sudoku_cursor
+    puzzle.mode = 0
+
 def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay]):# {{{
+    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
+    appdata["cursor_fn"] = on_move_sudoku_cursor
+
     def on_move_abs(y: int | None = None, x: int | None = None):
         sudoku_move_abs_cursor(big_sudoku_view, small_sudoku_view, puzzle, y = y, x = x)
         stdwin.refresh()
@@ -605,11 +613,12 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
     for digit in range(1, 10):
         stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
-    def on_quit():
-        puzzle.mode = 0 # TODO figure out how to restore this
-        on_overlay_confirm("Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lost any progress you made."])
+    # TODO refactoring
+    #def on_quit():
+    #    puzzle.mode = 0 # TODO figure out how to restore this
+    #    on_overlay_confirm("Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lost any progress you made."])
 
-    stdwin.add_mapping(tui.askey("q"), on_quit)
+    #stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
 def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
@@ -711,6 +720,7 @@ def confirm_select_cursor(appdata: dict):# {{{
     return overlay.items[overlay.selection].callback()
 # }}}
 
+ACCEL_KEYS_BLACKLIST = 'hjkl'
 def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]:# {{{
     accel_keys = []
     for item in overlay.items:
@@ -719,23 +729,19 @@ def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]
     return accel_keys
 # }}}
 
-# TODO make not hardcoded?
-def confirm_restore(appdata: dict, restore_cursor_fn: Callable[[int, int], bool]):# {{{
-    appdata["cursor_fn"] = restore_cursor_fn
-# }}}
-
-def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState, overlay_view: tui.PadView, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None], appdata: dict, msg: str, *items, selection: int = -1, info: list[str] | None = None) -> Overlay:# {{{
+def overlay_confirm(stdwin: tui.MainWindow, winddraw: WindowDrawState, pv: tui.PadView, post_restore: Callable[[], None], appdata: dict, msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[tui.MainWindow], None] | None = None) -> Overlay:# {{{
     '''items are tuples of (text, callback) or (text,), the latter of which
-    will assigned the callback to quit the overlay and restore the display'''
+    will assigned the callback to quit the overlay and restore the display
 
-    assert overlay_windraw.on_draw is None
-    restore_cursor_fn = appdata['cursor_fn']
-    dp = tui.DisplayRestore(stdwin, overlay_windraw, overlay_view, partial(confirm_restore, appdata, restore_cursor_fn))
+    Calls stdwin.refresh()'''
+
+    assert winddraw.ondraw is None
+    dp = tui.DisplayRestore(stdwin, windraw, pv, post_restore)
     stdwin.keymap = collections.OrderedDict()
     appdata["cursor_fn"] = partial(confirm_move_cursor, appdata)
 
     on_confirm_restore = partial(tui.display_restore, dp)
-    overlay = Overlay(msg, selection = selection)
+    overlay = Overlay(msg)
     for item in items:
         if len(item) == 1:
             overlay.items.append(OverlayItem(item[0], on_confirm_restore))
@@ -743,24 +749,25 @@ def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState
             text, callback = item
             overlay.items.append(OverlayItem(text, callback))
 
+    if selection is not None:
+        overlay.selection = selection
+
     if info is not None:
         overlay.info = info
 
     appdata["overlay"] = overlay
-    overlay_windraw.on_draw = partial(confirm_draw, overlay_view, appdata)
+    windraw.on_draw = partial(confirm_draw, pv, appdata)
 
-    # TODO refactor into mapping layers
-    window_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
-    cursor_mappings(stdwin, appdata)
+    if on_map is not None:
+        on_map(stdwin)
 
     on_select = partial(confirm_select_cursor, appdata)
     stdwin.add_mapping(tui.askey("KEY_ENTER"), on_select)
-    stdwin.add_mapping(tui.askey("C-H"), on_select)
     stdwin.add_mapping(tui.askey("C-J"), on_select)
 
-    accel_keys_blacklist = 'hjkl'
-    for key, callback in overlay_accel_keys(appdata['overlay']):
-        stdwin.add_mapping(tui.askey(key), callback)
+    for key, callback in overlay_accel_keys(overlay):
+        if key not in ACCEL_KEYS_BLACKLIST:
+            stdwin.add_mapping(tui.askey(key), callback)
 
     stdwin.refresh()
 # }}}
@@ -823,11 +830,9 @@ def main(stdwin: tui.MainWindow):
 
     tui.windraw_refresh(stddraw)
 
-    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
-    appdata["cursor_fn"] = on_move_sudoku_cursor
-
     #(msg: str, * items, selection: int = -1) -> Overlay:
-    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar, appdata)
+    # TODO add on_map
+    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, Placeholder, appdata)
 
     window_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
     cursor_mappings(stdwin, appdata)
