@@ -74,6 +74,37 @@ from util import clamp
 
 T = TypeVar('T')
 
+linechars = [#      1    2    3    4    5{{{
+             "00", "─", "│",
+             "03", "┌", "┐", "└", "┘",
+             "08", "├", "┤", "┬", "┴", "┼",
+             "14", "═", "║",
+             "17", "╒", "╓", "╔",
+             "21", "╕", "╖", "╗",
+             "25", "╘", "╙", "╚",
+             "29", "╛", "╜", "╝",
+             "33", "╞", "╟", "╠",
+             "37", "╡", "╢", "╣",
+             "41", "╤", "╥", "╦",
+             "45", "╧", "╨", "╩",
+             "49", "╪", "╫", "╬",
+             "53", "╭", "╮", "╯", "╰" ]# }}}
+
+L_ew, L_ns                         = linechars[1],  linechars[2]# {{{
+L_es, L_sw, L_ne, L_nw             = linechars[4],  linechars[5],  linechars[6],  linechars[7]
+L_nes, L_nsw, L_esw, L_new, L_nesw = linechars[9],  linechars[10], linechars[11], linechars[12], linechars[13]
+L_EW, L_NS                         = linechars[15], linechars[16]
+L_Es, L_eS, L_ES                   = linechars[18], linechars[19], linechars[20]
+L_Sw, L_Sw, L_SW                   = linechars[22], linechars[23], linechars[24]
+L_nE, L_Ne, L_NE                   = linechars[26], linechars[27], linechars[28]
+L_nW, L_Nw, L_NW                   = linechars[30], linechars[31], linechars[32]
+L_nEs, L_NeS, L_NES                = linechars[34], linechars[35], linechars[36]
+L_nsW, L_NSw, L_NSW                = linechars[38], linechars[39], linechars[40]
+L_EsW, L_eSw, L_ESW                = linechars[42], linechars[43], linechars[44]
+L_nEW, L_New, L_NEW                = linechars[46], linechars[47], linechars[48]
+L_nEsW, L_NeSw, L_NESW             = linechars[50], linechars[51], linechars[52]
+C_es, C_sw, C_nw, C_ne             = linechars[54], linechars[55], linechars[56], linechars[57]# }}}
+
 @dataclass(slots = True, frozen = True)
 class Key:
     ch: str
@@ -171,6 +202,19 @@ class MainWindow:
                     self.keymap[key]()
                     break
 
+class DisplayRestore:
+    '''This class does not reset the keymap of the stdwin -- you have to do
+    that yourself'''
+
+    __slots__ = ("stdwin", "keymap", "windraw", "pv", "post_restore")
+
+    def __init__(self, stdwin: MainWindow, windraw: WindowDrawState, pv: PadView, post_restore: Callable[[], None]):
+        self.stdwin = stdwin
+        self.keymap = stdwin.keymap
+        self.windraw = windraw
+        self.pv = pv
+        self.post_restore = post_restore
+
 def padview_clamp(pv: PadView) -> tuple[int,int,int,int,int,int]:# {{{
     '''Provides clamped values for pv.refresh() or pv.noutrefresh()'''
     py, px = pv.pad_start
@@ -187,6 +231,17 @@ def padview_clamp(pv: PadView) -> tuple[int,int,int,int,int,int]:# {{{
     sy = clamp(sy, smaxy - h)
     sx = clamp(sx, smaxx - w)
     return py, px, sy, sx, sy + h, sx + w
+# }}}
+
+def draw_box(win: curses.window, y: int, x: int, h: int, w: int, attr: int):# {{{
+    my = y + h
+    mx = x + w
+    win.addstr(y, x, C_es + (L_ew * (w - 2)) + C_sw, attr)
+    y += 1
+    while y != my:
+        win.addstr(y, x, L_ns + (" " * (w - 2)) + L_ns, attr)
+        y += 1
+    win.addstr(y, x, C_ne + (L_ew * (w - 2)) + C_nw, attr)
 # }}}
 
 def windraw_noutrefresh(windraw: WindowDrawState, pv: PadView | None = None):# {{{
@@ -315,6 +370,15 @@ def win_move_cursor(win: curses.window, cursor: Cursor):# {{{
     else:
         curses.curs_set(1)
         win.move(cy, cx)
+# }}}
+
+def display_restore(dp: DisplayRestore):# {{{
+    dp.stdwin.keymap = dp.keymap
+    dp.windraw.on_draw = None
+    dp.pv.desired_view_size = (0, 0)
+    dp.pv.desired_screen_start = (0, 0)
+    dp.post_restore()
+    dp.stdwin.refresh()
 # }}}
 
 def start_curses(stdscr: curses.window, init_fn: Callable[[curses.window], None], main_fn: Callable[[MainWindow], T], *args, **kwargs) -> T:# {{{

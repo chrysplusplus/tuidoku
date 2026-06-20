@@ -3,6 +3,7 @@
 """
 # TODO
 
+- fix deprecated typings
 - add reset command
 - refine game controls
 - implement grid scrolling
@@ -12,8 +13,8 @@
 """
 
 import curses
+import collections
 
-from collections import OrderedDict
 from dataclasses import dataclass, field, KW_ONLY
 from functools import partial
 from itertools import repeat
@@ -22,6 +23,21 @@ from typing import Callable
 import tui
 
 from util import clamp, set_cursor_shape
+from tui import (
+        L_ew, L_ns,
+        L_es, L_sw, L_ne, L_nw,
+        L_nes, L_nsw, L_esw, L_new, L_nesw,
+        L_EW, L_NS,
+        L_Es, L_eS, L_ES,
+        L_Sw, L_Sw, L_SW,
+        L_nE, L_Ne, L_NE,
+        L_nW, L_Nw, L_NW,
+        L_nEs, L_NeS, L_NES,
+        L_nsW, L_NSw, L_NSW,
+        L_EsW, L_eSw, L_ESW,
+        L_nEW, L_New, L_NEW,
+        L_nEsW, L_NeSw, L_NESW,
+        C_es, C_sw, C_nw, C_ne)
 
 debug_show: bool = False
 debug_vals: dict = {}
@@ -53,37 +69,6 @@ font_s = [# {{{
         ("9",), # 9
         (" ",)
         ]# }}}
-
-linechars = [#      1    2    3    4    5{{{
-             "00", "─", "│",
-             "03", "┌", "┐", "└", "┘",
-             "08", "├", "┤", "┬", "┴", "┼",
-             "14", "═", "║",
-             "17", "╒", "╓", "╔",
-             "21", "╕", "╖", "╗",
-             "25", "╘", "╙", "╚",
-             "29", "╛", "╜", "╝",
-             "33", "╞", "╟", "╠",
-             "37", "╡", "╢", "╣",
-             "41", "╤", "╥", "╦",
-             "45", "╧", "╨", "╩",
-             "49", "╪", "╫", "╬",
-             "53", "╭", "╮", "╯", "╰" ]# }}}
-
-L_ew, L_ns                         = linechars[1],  linechars[2]# {{{
-L_es, L_sw, L_ne, L_nw             = linechars[4],  linechars[5],  linechars[6],  linechars[7]
-L_nes, L_nsw, L_esw, L_new, L_nesw = linechars[9],  linechars[10], linechars[11], linechars[12], linechars[13]
-L_EW, L_NS                         = linechars[15], linechars[16]
-L_Es, L_eS, L_ES                   = linechars[18], linechars[19], linechars[20]
-L_Sw, L_Sw, L_SW                   = linechars[22], linechars[23], linechars[24]
-L_nE, L_Ne, L_NE                   = linechars[26], linechars[27], linechars[28]
-L_nW, L_Nw, L_NW                   = linechars[30], linechars[31], linechars[32]
-L_nEs, L_NeS, L_NES                = linechars[34], linechars[35], linechars[36]
-L_nsW, L_NSw, L_NSW                = linechars[38], linechars[39], linechars[40]
-L_EsW, L_eSw, L_ESW                = linechars[42], linechars[43], linechars[44]
-L_nEW, L_New, L_NEW                = linechars[46], linechars[47], linechars[48]
-L_nEsW, L_NeSw, L_NESW             = linechars[50], linechars[51], linechars[52]
-C_es, C_sw, C_nw, C_ne             = linechars[54], linechars[55], linechars[56], linechars[57]# }}}
 
 @dataclass(slots = True)
 class GridCell:
@@ -627,15 +612,6 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
     stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
-def draw_box(win: curses.window, y: int, x: int, h: int, w: int):# {{{
-    my = y + h
-    mx = x + w
-    win.addstr(y, x, C_es + (L_ew * (w - 2)) + C_sw, ATTR_NORMAL)
-    y += 1
-    while y != my:
-        win.addstr(y, x, L_ns + (" " * (w - 2)) + L_ns, ATTR_NORMAL)
-        y += 1
-    win.addstr(y, x, C_ne + (L_ew * (w - 2)) + C_nw, ATTR_NORMAL)
 # }}}
 
 def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
@@ -649,8 +625,8 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
     h = 3 + (padding * 2)
     w = len(msg) + 2
 
-    draw_box(win, 0, 0, h, w)
     win.addstr(padding, 1, msg, ATTR_NORMAL)
+    tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
 
     GAP_SENTINEL = object()
     cursor_pre = ("> ", ATTR_NORMAL)
@@ -737,13 +713,9 @@ def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]
     return accel_keys
 # }}}
 
-def confirm_restore(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState, overlay_view: tui.PadView, appdata: dict, restore_cursor_fn: Callable[[int, int], bool], restore_keymap: OrderedDict):# {{{
-    stdwin.keymap = restore_keymap
+# TODO make not hardcoded?
+def confirm_restore(appdata: dict, restore_cursor_fn: Callable[[int, int], bool]):# {{{
     appdata["cursor_fn"] = restore_cursor_fn
-    overlay_windraw.on_draw = None
-    overlay_view.desired_view_size = (0, 0)
-    overlay_view.desired_screen_start = (0, 0)
-    stdwin.refresh()
 # }}}
 
 def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState, overlay_view: tui.PadView, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None], appdata: dict, msg: str, *items, selection: int = -1) -> Overlay:# {{{
@@ -752,11 +724,11 @@ def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState
 
     assert overlay_windraw.on_draw is None
     restore_cursor_fn = appdata['cursor_fn']
-    restore_keymap = stdwin.keymap
-    stdwin.keymap = OrderedDict()
+    dp = tui.DisplayRestore(stdwin, overlay_windraw, overlay_view, partial(confirm_restore, appdata, restore_cursor_fn))
+    stdwin.keymap = collections.OrderedDict()
     appdata["cursor_fn"] = partial(confirm_move_cursor, appdata)
 
-    on_confirm_restore = partial(confirm_restore, stdwin, overlay_windraw, overlay_view, appdata, restore_cursor_fn, restore_keymap)
+    on_confirm_restore = partial(tui.display_restore, dp)
     overlay = Overlay(msg, selection = selection)
     for item in items:
         if len(item) == 1:
