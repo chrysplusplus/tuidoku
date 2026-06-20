@@ -508,63 +508,8 @@ def move_cursor(appdata: dict, y: int = 0, x: int = 0) -> bool:# {{{
     return cursor_fn(y = y, x = x)
 # }}}
 
-EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
-PUZZLE_SOLUTION = ""
-
-def main(stdwin: tui.MainWindow):
-    puzzle_input = EXAMPLE_PUZZLE
-    puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
-    stddraw = stdwin.stddraw
+def window_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None]):# {{{
     stdscr = stdwin.stdscr
-
-    stdwin.stdcurs.cursor = (-1, -1)
-
-    appdata = {
-            "default_status": partial(sudoku_mode, puzzle),
-            "sudoku_draw_last_err": False,
-            "puzzle_input": puzzle_input,
-            "puzzle": puzzle
-            }
-
-    reset_statusbar = partial(statusbar_reset, appdata)
-    reset_statusbar()
-
-    big_sudoku_win = curses.newpad(100, 100)
-    big_sudoku_view = tui.PadView(big_sudoku_win, (0, 0), (2, 0), (0, 0))
-    big_sudoku = tui.WindowDrawState(big_sudoku_win)
-    big_sudoku.on_draw = partial(big_sudoku_draw, appdata, big_sudoku_view, reset_statusbar)
-    stdwin.add_child(big_sudoku, big_sudoku_view)
-
-    small_sudoku_win = curses.newpad(50, 50)
-    small_sudoku_view = tui.PadView(small_sudoku_win, (0, 0), (2, 0), (0, 0))
-    small_sudoku = tui.WindowDrawState(small_sudoku_win)
-    small_sudoku.on_draw = partial(small_sudoku_draw, appdata, small_sudoku_view, stdwin.stdcurs, reset_statusbar)
-    stdwin.add_child(small_sudoku, small_sudoku_view)
-
-    resize_gridviews(big_sudoku_view, small_sudoku_view)
-
-    overlay_win = curses.newpad(100, 100)
-    overlay_view = tui.PadView(overlay_win, (0, 0), (2, 0), (0, 0))
-    overlay = tui.WindowDrawState(overlay_win)
-    stdwin.add_child(overlay, overlay_view)
-
-    titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
-    titlebar = tui.WindowDrawState(titlebar_win)
-    titlebar.on_draw = titlebar_draw
-    stdwin.add_child(titlebar)
-
-    debug_screen_win = curses.newpad(100, 100)
-    debug_screen_view = tui.PadView(debug_screen_win, (0, 0), (0, 0), (0, 0))
-    debug_screen = tui.WindowDrawState(debug_screen_win)
-    debug_screen.on_draw = partial(debug_screen_draw, debug_screen_view)
-    stdwin.add_child(debug_screen, debug_screen_view)
-
-    statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-    statusbar = tui.WindowDrawState(statusbar_win)
-    statusbar.on_draw = partial(statusbar_draw, appdata)
-    stdwin.add_child(statusbar)
-
-    tui.windraw_refresh(stddraw)
 
     def on_resize():
         curses.update_lines_cols()
@@ -574,9 +519,6 @@ def main(stdwin: tui.MainWindow):
         stdwin.refresh()
 
     stdwin.add_mapping(tui.askey("KEY_RESIZE"), on_resize)
-
-    stdwin.add_mapping(tui.askey("q"), stdwin.quit)
-    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
 
     def on_reset():
         stdscr.clear()
@@ -591,10 +533,9 @@ def main(stdwin: tui.MainWindow):
         stdwin.refresh()
 
     stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
+# }}}
 
-    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
-    appdata["cursor_fn"] = on_move_sudoku_cursor
-
+def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
     def on_move_rel(y = 0, x = 0):
         if move_cursor(appdata, y = y, x = x):
             stdwin.refresh()
@@ -619,6 +560,9 @@ def main(stdwin: tui.MainWindow):
     stdwin.add_mapping(tui.askey("w"), mv_up)
     stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
 
+# }}}
+
+def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid):# {{{
     def on_move_abs(y: int | None = None, x: int | None = None):
         sudoku_move_abs_cursor(big_sudoku_view, small_sudoku_view, puzzle, y = y, x = x)
         stdwin.refresh()
@@ -661,6 +605,165 @@ def main(stdwin: tui.MainWindow):
 
     for digit in range(1, 10):
         stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
+# }}}
+
+def draw_box(win: curses.window, y: int, x: int, h: int, w: int):# {{{
+    my = y + h
+    mx = x + w
+    win.addstr(y, x, C_es + (L_ew * (w - 2)) + C_sw, ATTR_NORMAL)
+    y += 1
+    while y != my:
+        win.addstr(y, x, L_ns + (" " * (w - 2)) + L_ns, ATTR_NORMAL)
+        y += 1
+    win.addstr(y, x, C_ne + (L_ew * (w - 2)) + C_nw, ATTR_NORMAL)
+# }}}
+
+def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
+    msg = appdata.get("overlay_message", "")
+    selection = appdata.get("overlay_selection", -1)
+    items = appdata.get("overlay_items", tuple())
+    win.erase()
+    padding = 1
+    maxy, maxx = win.getmaxyx()
+    maxx = min(maxx, curses.COLS - (padding * 2) - 1)
+    msg = (" " * padding) + msg[:maxx] + (" " * padding)
+    h = 3 + (padding * 2)
+    w = len(msg) + 2
+
+    draw_box(win, 0, 0, h, w)
+    win.addstr(padding, 1, msg, ATTR_NORMAL)
+
+    rendered = []
+    rendered_width = 0
+    for index, item in enumerate(items):
+        if selection == index:
+            item = "> " + item + " <"
+            rendered.append(item)
+            rendered_width += len(item)
+        else:
+            item = "  " + item + "  "
+            rendered.append(item)
+            rendered_width += len(item)
+
+    gap = " " * ((len(msg) - rendered_width) // (len(items) + 1))
+    win.addstr(padding + 2, 1, gap + gap.join(rendered), ATTR_NORMAL)
+
+    pv.desired_view_size = (h, w)
+    pv.desired_screen_start = ((curses.LINES - h) // 2, (curses.COLS - w) // 2)
+    return True
+# }}}
+
+def confirm_move_cursor(appdata: dict, y: int = 0, x: int = 0) -> bool:# {{{
+    selection = appdata.get("overlay_selection", -1)
+    items = appdata.get("overlay_items", tuple())
+    if y > 0 or x > 0:
+        selection = (selection + 1) % len(items)
+    if y < 0 or x < 0:
+        selection = (selection - 1) % len(items)
+    appdata["overlay_selection"] = selection
+    return True
+# }}}
+
+def confirm_select_cursor(appdata: dict):# {{{
+    selection = appdata.get("overlay_selection", -1)
+    items = appdata.get("overlay_items", tuple())
+    callbacks = appdata.get("overlay_callbacks", None)
+    assert callbacks is not None and len(items) == len(callbacks)
+    if selection < 0 or selection >= len(items):
+        return
+    return callbacks[selection]()
+# }}}
+
+def overlay_confirm_then():# {{{
+    # TODO implement
+    ...
+# }}}
+
+EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
+PUZZLE_SOLUTION = ""
+
+def main(stdwin: tui.MainWindow):
+    puzzle_input = EXAMPLE_PUZZLE
+    puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
+    stddraw = stdwin.stddraw
+    stdscr = stdwin.stdscr
+
+    stdwin.stdcurs.cursor = (-1, -1)
+
+    appdata = {
+            "default_status": partial(sudoku_mode, puzzle),
+            "sudoku_draw_last_err": False,
+            "puzzle_input": puzzle_input,
+            "puzzle": puzzle
+            }
+
+    reset_statusbar = partial(statusbar_reset, appdata)
+    reset_statusbar()
+
+    big_sudoku_win = curses.newpad(100, 100)
+    big_sudoku_view = tui.PadView(big_sudoku_win, (0, 0), (2, 0), (0, 0))
+    big_sudoku = tui.WindowDrawState(big_sudoku_win)
+    big_sudoku.on_draw = partial(big_sudoku_draw, appdata, big_sudoku_view, reset_statusbar)
+    stdwin.add_child(big_sudoku, big_sudoku_view)
+
+    small_sudoku_win = curses.newpad(50, 50)
+    small_sudoku_view = tui.PadView(small_sudoku_win, (0, 0), (2, 0), (0, 0))
+    small_sudoku = tui.WindowDrawState(small_sudoku_win)
+    small_sudoku.on_draw = partial(small_sudoku_draw, appdata, small_sudoku_view, stdwin.stdcurs, reset_statusbar)
+    stdwin.add_child(small_sudoku, small_sudoku_view)
+
+    resize_gridviews(big_sudoku_view, small_sudoku_view)
+
+    # confirm overlay setup TODO implement callback to initialise
+    puzzle.mode = 0
+    appdata["overlay_message"] = "Are you sure you want to quit?"
+    appdata["overlay_items"] = ("Yes", "No")
+    appdata["overlay_selection"] = 0
+    appdata["overlay_callbacks"] = (stdwin.quit, lambda: None)
+
+    # TODO implement
+    overlay_win = curses.newpad(100, 100)
+    overlay_view = tui.PadView(overlay_win, (0, 0), (2, 0), (0, 0))
+    overlay = tui.WindowDrawState(overlay_win)
+    overlay.on_draw = partial(confirm_draw, overlay_view, appdata)
+    stdwin.add_child(overlay, overlay_view)
+
+    titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
+    titlebar = tui.WindowDrawState(titlebar_win)
+    titlebar.on_draw = titlebar_draw
+    stdwin.add_child(titlebar)
+
+    debug_screen_win = curses.newpad(100, 100)
+    debug_screen_view = tui.PadView(debug_screen_win, (0, 0), (0, 0), (0, 0))
+    debug_screen = tui.WindowDrawState(debug_screen_win)
+    debug_screen.on_draw = partial(debug_screen_draw, debug_screen_view)
+    stdwin.add_child(debug_screen, debug_screen_view)
+
+    statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
+    statusbar = tui.WindowDrawState(statusbar_win)
+    statusbar.on_draw = partial(statusbar_draw, appdata)
+    stdwin.add_child(statusbar)
+
+    tui.windraw_refresh(stddraw)
+
+    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
+    #appdata["cursor_fn"] = on_move_sudoku_cursor
+
+    on_move_overlay_cursor = partial(confirm_move_cursor, appdata)
+    appdata["cursor_fn"] = on_move_overlay_cursor
+
+    window_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
+    cursor_mappings(stdwin, appdata)
+    #sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle)
+
+    # TODO implement
+    on_select = partial(confirm_select_cursor, appdata)
+    stdwin.add_mapping(tui.askey("KEY_ENTER"), on_select)
+    stdwin.add_mapping(tui.askey("C-H"), on_select)
+    stdwin.add_mapping(tui.askey("C-J"), on_select)
+
+    #stdwin.add_mapping(tui.askey("q"), stdwin.quit)
+    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
 
     stdwin.mainloop()
 
