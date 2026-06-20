@@ -565,12 +565,17 @@ def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
 
 # }}}
 
-def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_cursor: tuple[int, int], restore_mode: int):
+def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_cursor: tuple[int, int], restore_mode: int):# {{{
     appdata["cursor_fn"] = on_move_sudoku_cursor
     puzzle.cursor = restore_cursor
     puzzle.mode = restore_mode
+# }}}
 
-def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], appdata: dict):# {{{
+def map_final_quit(stdwin: tui.MainWindow):# {{{
+    stdwin.add_mapping(tui.askey("q"), stdwin.quit)
+# }}}
+
+def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], map_base: Callable[[], None], appdata: dict):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
     appdata["cursor_fn"] = on_move_sudoku_cursor
 
@@ -618,13 +623,22 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
         stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
     on_post_restore = partial(sudoku_restore, stdwin, on_move_sudoku_cursor, puzzle, appdata)
+    QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
+    QUIT_CONFIRM_ITMS = (("&Yes", stdwin.quit), ("&No",))
+    QUIT_CONFIRM_KWARGS = {
+            "selection": 1,
+            "info": [
+                "This will lose any progress you've made.",
+                "(You can hit 'q' again to exit.)"],
+            "on_map": Invoke(map_base).then(partial(map_final_quit, stdwin))}
 
     def on_quit():
         restore_cursor = puzzle.cursor
         restore_mode = puzzle.mode
         puzzle.cursor = (-1, -1)
         puzzle.mode = 0
-        on_overlay_confirm(partial(on_post_restore, restore_cursor, restore_mode), "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
+        fn = partial(on_post_restore, restore_cursor, restore_mode)
+        on_overlay_confirm(fn, QUIT_CONFIRM_MSG, *QUIT_CONFIRM_ITMS, **QUIT_CONFIRM_KWARGS)
 
     stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
@@ -852,10 +866,10 @@ def main(stdwin: tui.MainWindow):
 
     map_base_mappings = Invoke(map_window_mappings).then(map_cursor_mappings)
 
-    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, appdata, on_map = map_base_mappings)
+    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, appdata)
 
     map_base_mappings()
-    sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm, appdata)
+    sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm, map_base_mappings, appdata)
 
     stdwin.mainloop()
 
