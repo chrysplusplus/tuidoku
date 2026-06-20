@@ -3,6 +3,7 @@
 """
 # TODO
 
+- finish refactoring draw procedures, etc., with SudokuApp
 - add reset command
 - refine game controls
 - implement grid scrolling
@@ -98,6 +99,62 @@ class Overlay:
     _: KW_ONLY
     selection: int = -1
     info: list[str] = field(default_factory = list)
+
+class SudokuApp:# {{{
+    def __init__(self, stdwin: tui.MainWindow, puzzle_input: str):# {{{
+        self.stdwin = stdwin
+        self.puzzle_input = puzzle_input
+        self.puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
+        self.appdata = {
+                "default_status": partial(sudoku_mode, self.puzzle),
+                "sudoku_draw_last_err": False,
+                "puzzle_input": self.puzzle_input,
+                "puzzle": self.puzzle}
+        self.reset_statusbar = partial(statusbar_reset, self.appdata)
+
+        self.init_big_sudoku()
+        self.init_small_sudoku()
+        self.init_overlay()
+        self.init_titlebar()
+        self.init_debug_screen()
+        self.init_statusbar()
+
+        self.on_overlay_confirm = partial(overlay_confirm, self.stdwin, self.overlay, self.overlay_view, self.appdata)
+# }}}
+    def init_big_sudoku(self):# {{{
+        self.big_sudoku_win = curses.newpad(100, 100)
+        self.big_sudoku_view = tui.PadView(self.big_sudoku_win, (0, 0), (2, 0), (0, 0))
+        self.big_sudoku = tui.WindowDrawState(self.big_sudoku_win)
+        self.big_sudoku.on_draw = partial(big_sudoku_draw, self.appdata, self.big_sudoku_view, self.reset_statusbar)
+# }}}
+    def init_small_sudoku(self):# {{{
+        self.small_sudoku_win = curses.newpad(50, 50)
+        self.small_sudoku_view = tui.PadView(self.small_sudoku_win, (0, 0), (2, 0), (0, 0))
+        self.small_sudoku = tui.WindowDrawState(self.small_sudoku_win)
+        self.small_sudoku.on_draw = partial(small_sudoku_draw, self.appdata, self.small_sudoku_view, self.stdwin.stdcurs, self.reset_statusbar)
+# }}}
+    def init_overlay(self):# {{{
+        self.overlay_win = curses.newpad(100, 100)
+        self.overlay_view = tui.PadView(self.overlay_win, (0, 0), (0, 0), (0, 0))
+        self.overlay = tui.WindowDrawState(self.overlay_win)
+# }}}
+    def init_titlebar(self):# {{{
+        self.titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
+        self.titlebar = tui.WindowDrawState(self.titlebar_win)
+        self.titlebar.on_draw = titlebar_draw
+# }}}
+    def init_debug_screen(self):# {{{
+        self.debug_screen_win = curses.newpad(100, 100)
+        self.debug_screen_view = tui.PadView(self.debug_screen_win, (0, 0), (0, 0), (0, 0))
+        self.debug_screen = tui.WindowDrawState(self.debug_screen_win)
+        self.debug_screen.on_draw = partial(debug_screen_draw, self.debug_screen_view)
+# }}}
+    def init_statusbar(self):# {{{
+        self.statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
+        self.statusbar = tui.WindowDrawState(self.statusbar_win)
+        self.statusbar.on_draw = partial(statusbar_draw, self.appdata)
+# }}}
+# }}}
 
 def init_curses(stdscr: curses.window):# {{{
     curses.raw()
@@ -508,61 +565,65 @@ def move_cursor(appdata: dict, y: int = 0, x: int = 0) -> bool:# {{{
     return cursor_fn(y = y, x = x)
 # }}}
 
-def window_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None]):# {{{
-    stdscr = stdwin.stdscr
+def map_window(app: SudokuApp):# {{{
+    stdscr = app.stdwin.stdscr
 
     def on_resize():
         curses.update_lines_cols()
-        resize_gridviews(big_sudoku_view, small_sudoku_view)
-        big_sudoku_view.pad_start = (0, 0)
-        nudge_coords_into_view(big_sudoku_view, small_sudoku_view, puzzle.cursor)
-        stdwin.refresh()
+        resize_gridviews(app.big_sudoku_view, app.small_sudoku_view)
+        app.big_sudoku_view.pad_start = (0, 0)
+        nudge_coords_into_view(app.big_sudoku_view, app.small_sudoku_view, app.puzzle.cursor)
+        app.stdwin.refresh()
 
-    stdwin.add_mapping(tui.askey("KEY_RESIZE"), on_resize)
+    app.stdwin.add_mapping(tui.askey("KEY_RESIZE"), on_resize)
 
     def on_reset():
         stdscr.clear()
         reset_statusbar()
-        stdwin.refresh()
+        app.stdwin.refresh()
 
-    stdwin.add_mapping(tui.askey("C-L"), on_reset)
+    app.stdwin.add_mapping(tui.askey("C-L"), on_reset)
 
     def on_debug_toggle():
         global debug_show
         debug_show = not debug_show
-        stdwin.refresh()
+        app.stdwin.refresh()
 
-    stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
+    app.stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
 
     # TODO implement safety catch for Ctrl-C
-    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
+    app.stdwin.add_mapping(tui.askey("C-C"), app.stdwin.quit)
 # }}}
 
-def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
+def map_cursor(app: SudokuApp):# {{{
     def on_move_rel(y = 0, x = 0):
-        if move_cursor(appdata, y = y, x = x):
-            stdwin.refresh()
+        if move_cursor(app.appdata, y = y, x = x):
+            app.stdwin.refresh()
 
     mv_left = partial(on_move_rel, x = -1)
-    stdwin.add_mapping(tui.askey("h"), mv_left)
-    stdwin.add_mapping(tui.askey("a"), mv_left)
-    stdwin.add_mapping(tui.askey("KEY_LEFT"), mv_left)
+    app.stdwin.add_mapping(tui.askey("h"), mv_left)
+    app.stdwin.add_mapping(tui.askey("a"), mv_left)
+    app.stdwin.add_mapping(tui.askey("KEY_LEFT"), mv_left)
 
     mv_right = partial(on_move_rel, x = 1)
-    stdwin.add_mapping(tui.askey("l"), mv_right)
-    stdwin.add_mapping(tui.askey("d"), mv_right)
-    stdwin.add_mapping(tui.askey("KEY_RIGHT"), mv_right)
+    app.stdwin.add_mapping(tui.askey("l"), mv_right)
+    app.stdwin.add_mapping(tui.askey("d"), mv_right)
+    app.stdwin.add_mapping(tui.askey("KEY_RIGHT"), mv_right)
 
     mv_down = partial(on_move_rel, y = 1)
-    stdwin.add_mapping(tui.askey("j"), mv_down)
-    stdwin.add_mapping(tui.askey("s"), mv_down)
-    stdwin.add_mapping(tui.askey("KEY_DOWN"), mv_down)
+    app.stdwin.add_mapping(tui.askey("j"), mv_down)
+    app.stdwin.add_mapping(tui.askey("s"), mv_down)
+    app.stdwin.add_mapping(tui.askey("KEY_DOWN"), mv_down)
 
     mv_up = partial(on_move_rel, y = -1)
-    stdwin.add_mapping(tui.askey("k"), mv_up)
-    stdwin.add_mapping(tui.askey("w"), mv_up)
-    stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
+    app.stdwin.add_mapping(tui.askey("k"), mv_up)
+    app.stdwin.add_mapping(tui.askey("w"), mv_up)
+    app.stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
+# }}}
 
+def map_base(app: SudokuApp):# {{{
+    map_window(app)
+    map_cursor(app)
 # }}}
 
 def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_cursor: tuple[int, int], restore_mode: int):# {{{
@@ -575,72 +636,73 @@ def map_final_quit(stdwin: tui.MainWindow):# {{{
     stdwin.add_mapping(tui.askey("q"), stdwin.quit)
 # }}}
 
-def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], map_base: Callable[[], None], appdata: dict):# {{{
-    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
-    appdata["cursor_fn"] = on_move_sudoku_cursor
+def map_sudoku(app: SudokuApp):# {{{
+    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app.big_sudoku_view, app.small_sudoku_view, app.puzzle)
+    app.appdata["cursor_fn"] = on_move_sudoku_cursor
 
     def on_move_abs(y: int | None = None, x: int | None = None):
-        sudoku_move_abs_cursor(big_sudoku_view, small_sudoku_view, puzzle, y = y, x = x)
-        stdwin.refresh()
+        sudoku_move_abs_cursor(app.big_sudoku_view, app.small_sudoku_view, app.puzzle, y = y, x = x)
+        app.stdwin.refresh()
 
     mv_first = partial(on_move_abs, x = 0)
-    stdwin.add_mapping(tui.askey("H"), mv_first)
-    stdwin.add_mapping(tui.askey("KEY_HOME"), mv_first)
+    app.stdwin.add_mapping(tui.askey("H"), mv_first)
+    app.stdwin.add_mapping(tui.askey("KEY_HOME"), mv_first)
 
     mv_last = partial(on_move_abs, x = 8)
-    stdwin.add_mapping(tui.askey("L"), mv_last)
-    stdwin.add_mapping(tui.askey("KEY_END"), mv_last)
+    app.stdwin.add_mapping(tui.askey("L"), mv_last)
+    app.stdwin.add_mapping(tui.askey("KEY_END"), mv_last)
 
     mv_bottom = partial(on_move_abs, y = 8)
-    stdwin.add_mapping(tui.askey("J"), mv_bottom)
-    stdwin.add_mapping(tui.askey("KEY_NPAGE"), mv_bottom)
+    app.stdwin.add_mapping(tui.askey("J"), mv_bottom)
+    app.stdwin.add_mapping(tui.askey("KEY_NPAGE"), mv_bottom)
 
     mv_top = partial(on_move_abs, y = 0)
-    stdwin.add_mapping(tui.askey("K"), mv_top)
-    stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
+    app.stdwin.add_mapping(tui.askey("K"), mv_top)
+    app.stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
 
     def on_delete():
-        sudoku_del(puzzle)
-        stdwin.refresh()
+        sudoku_del(app.puzzle)
+        app.stdwin.refresh()
 
-    stdwin.add_mapping(tui.askey("KEY_BACKSPACE"), on_delete)
-    stdwin.add_mapping(tui.askey("KEY_DC"), on_delete)
-    stdwin.add_mapping(tui.askey("."), on_delete)
+    app.stdwin.add_mapping(tui.askey("KEY_BACKSPACE"), on_delete)
+    app.stdwin.add_mapping(tui.askey("KEY_DC"), on_delete)
+    app.stdwin.add_mapping(tui.askey("."), on_delete)
 
     def on_toggle_notes():
-        sudoku_toggle_note_mode(puzzle)
-        stdwin.refresh()
+        sudoku_toggle_note_mode(app.puzzle)
+        app.stdwin.refresh()
 
-    stdwin.add_mapping(tui.askey("n"), on_toggle_notes)
-    stdwin.add_mapping(tui.askey("0"), on_toggle_notes)
-    stdwin.add_mapping(tui.askey("KEY_IC"), on_toggle_notes)
+    app.stdwin.add_mapping(tui.askey("n"), on_toggle_notes)
+    app.stdwin.add_mapping(tui.askey("0"), on_toggle_notes)
+    app.stdwin.add_mapping(tui.askey("KEY_IC"), on_toggle_notes)
+
 
     def on_digit(digit: int):
-        sudoku_ins(puzzle, digit)
-        stdwin.refresh()
+        sudoku_ins(app.puzzle, digit)
+        app.stdwin.refresh()
 
     for digit in range(1, 10):
-        stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
+        app.stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
-    on_post_restore = partial(sudoku_restore, stdwin, on_move_sudoku_cursor, puzzle, appdata)
+    on_post_restore = partial(sudoku_restore, app.stdwin, on_move_sudoku_cursor, app.puzzle, app.appdata)
     QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
-    QUIT_CONFIRM_ITMS = (("&Yes", stdwin.quit), ("&No",))
+    QUIT_CONFIRM_ITMS = (("&Yes", app.stdwin.quit), ("&No",))
     QUIT_CONFIRM_KWARGS = {
             "selection": 1,
             "info": [
                 "This will lose any progress you've made.",
                 "(You can hit 'q' again to exit.)"],
-            "on_map": Invoke(map_base).then(partial(map_final_quit, stdwin))}
+            "on_map": Invoke(partial(map_base, app)).then(partial(map_final_quit, app.stdwin))}
 
     def on_quit():
-        restore_cursor = puzzle.cursor
-        restore_mode = puzzle.mode
-        puzzle.cursor = (-1, -1)
-        puzzle.mode = 0
+        restore_cursor = app.puzzle.cursor
+        restore_mode = app.puzzle.mode
+        app.puzzle.cursor = (-1, -1)
+        app.puzzle.mode = 0
         fn = partial(on_post_restore, restore_cursor, restore_mode)
-        on_overlay_confirm(fn, QUIT_CONFIRM_MSG, *QUIT_CONFIRM_ITMS, **QUIT_CONFIRM_KWARGS)
+        app.on_overlay_confirm(fn, QUIT_CONFIRM_MSG, *QUIT_CONFIRM_ITMS, **QUIT_CONFIRM_KWARGS)
 
-    stdwin.add_mapping(tui.askey("q"), on_quit)
+    app.stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
 def confirm_draw(pv: tui.PadView, cursor: tui.Cursor, appdata: dict, win: curses.window):# {{{
@@ -808,68 +870,23 @@ PUZZLE_SOLUTION = ""
 
 def main(stdwin: tui.MainWindow):
     puzzle_input = EXAMPLE_PUZZLE
-    puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
-    stddraw = stdwin.stddraw
-    stdscr = stdwin.stdscr
+    app = SudokuApp(stdwin, puzzle_input)
+
+    stdwin.add_child(app.big_sudoku, app.big_sudoku_view)
+    stdwin.add_child(app.small_sudoku, app.small_sudoku_view)
+
+    stdwin.add_child(app.overlay, app.overlay_view)
+    stdwin.add_child(app.titlebar)
+    stdwin.add_child(app.debug_screen, app.debug_screen_view)
+    stdwin.add_child(app.statusbar)
 
     stdwin.stdcurs.cursor = (-1, -1)
+    app.reset_statusbar()
+    resize_gridviews(app.big_sudoku_view, app.small_sudoku_view)
+    stdwin.refresh()
 
-    appdata = {
-            "default_status": partial(sudoku_mode, puzzle),
-            "sudoku_draw_last_err": False,
-            "puzzle_input": puzzle_input,
-            "puzzle": puzzle
-            }
-
-    reset_statusbar = partial(statusbar_reset, appdata)
-    reset_statusbar()
-
-    big_sudoku_win = curses.newpad(100, 100)
-    big_sudoku_view = tui.PadView(big_sudoku_win, (0, 0), (2, 0), (0, 0))
-    big_sudoku = tui.WindowDrawState(big_sudoku_win)
-    big_sudoku.on_draw = partial(big_sudoku_draw, appdata, big_sudoku_view, reset_statusbar)
-    stdwin.add_child(big_sudoku, big_sudoku_view)
-
-    small_sudoku_win = curses.newpad(50, 50)
-    small_sudoku_view = tui.PadView(small_sudoku_win, (0, 0), (2, 0), (0, 0))
-    small_sudoku = tui.WindowDrawState(small_sudoku_win)
-    small_sudoku.on_draw = partial(small_sudoku_draw, appdata, small_sudoku_view, stdwin.stdcurs, reset_statusbar)
-    stdwin.add_child(small_sudoku, small_sudoku_view)
-
-    resize_gridviews(big_sudoku_view, small_sudoku_view)
-
-    overlay_win = curses.newpad(100, 100)
-    overlay_view = tui.PadView(overlay_win, (0, 0), (0, 0), (0, 0))
-    overlay = tui.WindowDrawState(overlay_win)
-    stdwin.add_child(overlay, overlay_view)
-
-    titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
-    titlebar = tui.WindowDrawState(titlebar_win)
-    titlebar.on_draw = titlebar_draw
-    stdwin.add_child(titlebar)
-
-    debug_screen_win = curses.newpad(100, 100)
-    debug_screen_view = tui.PadView(debug_screen_win, (0, 0), (0, 0), (0, 0))
-    debug_screen = tui.WindowDrawState(debug_screen_win)
-    debug_screen.on_draw = partial(debug_screen_draw, debug_screen_view)
-    stdwin.add_child(debug_screen, debug_screen_view)
-
-    statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-    statusbar = tui.WindowDrawState(statusbar_win)
-    statusbar.on_draw = partial(statusbar_draw, appdata)
-    stdwin.add_child(statusbar)
-
-    tui.windraw_refresh(stddraw)
-
-    map_window_mappings = partial(window_mappings, stdwin, big_sudoku_view, small_sudoku_view, puzzle, reset_statusbar)
-    map_cursor_mappings = partial(cursor_mappings, stdwin, appdata)
-
-    map_base_mappings = Invoke(map_window_mappings).then(map_cursor_mappings)
-
-    on_overlay_confirm = partial(overlay_confirm, stdwin, overlay, overlay_view, appdata)
-
-    map_base_mappings()
-    sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm, map_base_mappings, appdata)
+    map_base(app)
+    map_sudoku(app)
 
     stdwin.mainloop()
 
