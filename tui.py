@@ -67,8 +67,9 @@ import curses
 import curses.ascii as cascii
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, KW_ONLY
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 from util import clamp
 

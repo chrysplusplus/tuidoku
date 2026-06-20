@@ -3,7 +3,6 @@
 """
 # TODO
 
-- fix deprecated typings
 - add reset command
 - refine game controls
 - implement grid scrolling
@@ -15,10 +14,10 @@
 import curses
 import collections
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, KW_ONLY
 from functools import partial
 from itertools import repeat
-from typing import Callable
 
 import tui
 
