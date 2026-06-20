@@ -21,7 +21,7 @@ from itertools import repeat
 
 import tui
 
-from util import clamp, pad_text, set_cursor_shape, Invoke
+from util import clamp, pad_text, Invoke
 from tui import (
         L_ew, L_ns,
         L_es, L_sw, L_ne, L_nw,
@@ -253,8 +253,6 @@ def draw_big_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
     win = pv.pad
     CELL_H, CELL_W = LARGE_GRID_CELL_SIZE
     tui.win_addlines(win, LARGE_GRID)
-
-    cy, cx = puzzle.cursor
 
     for i, cell in enumerate(puzzle.grid):
         y, x = divmod(i, 9)
@@ -532,6 +530,9 @@ def window_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
         stdwin.refresh()
 
     stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
+
+    # TODO implement safety catch for Ctrl-C
+    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
 # }}}
 
 def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
@@ -561,9 +562,9 @@ def cursor_mappings(stdwin: tui.MainWindow, appdata: dict):# {{{
 
 # }}}
 
-def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict):
+def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_mode):
     appdata["cursor_fn"] = on_move_sudoku_cursor
-    puzzle.mode = 1
+    puzzle.mode = restore_mode
 
 def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, on_overlay_confirm: Callable[..., Overlay], appdata: dict):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, big_sudoku_view, small_sudoku_view, puzzle)
@@ -616,8 +617,9 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
 
     def on_quit():
         # TODO disable and restore small grid cursor
+        restore_mode = puzzle.mode
         puzzle.mode = 0
-        on_overlay_confirm(on_post_restore, "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
+        on_overlay_confirm(partial(on_post_restore, restore_mode), "Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lose any progress you've made."])
 
     stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
@@ -633,7 +635,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
     msg = pad_text(overlay.message[:maxx], padding)
     info = [line[:maxx] for line in overlay.info]
 
-    h = len(info) + 4 + (padding * 2)
+    h = len(info) + 3 + (padding * 2)
     w = max(len(msg), max(len(line) for line in info)) + 2
 
     tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
@@ -698,7 +700,7 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             win.addstr(y, x, text, attr)
             x += len(text)
 
-    pv.desired_view_size = (h, w)
+    pv.desired_view_size = (h, w - 1)
     pv.desired_screen_start = ((curses.LINES - h) // 2, (curses.COLS - w) // 2)
     return True
 # }}}
@@ -841,13 +843,9 @@ def main(stdwin: tui.MainWindow):
     map_base_mappings()
     sudoku_mappings(stdwin, big_sudoku_view, small_sudoku_view, puzzle, on_overlay_confirm, appdata)
 
-    # TODO implement safety catch for Ctrl-C
-    stdwin.add_mapping(tui.askey("C-C"), stdwin.quit)
-
     stdwin.mainloop()
 
 if __name__ == "__main__":
-    set_cursor_shape()
     curses.wrapper(tui.start_curses, init_curses, main)
 
 # vim: foldmethod=marker
