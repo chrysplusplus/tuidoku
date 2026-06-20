@@ -22,7 +22,7 @@ from typing import Callable
 
 import tui
 
-from util import clamp, set_cursor_shape
+from util import clamp, pad_text, set_cursor_shape
 from tui import (
         L_ew, L_ns,
         L_es, L_sw, L_ne, L_nw,
@@ -98,6 +98,7 @@ class Overlay:
     items: list[OverlayItem] = field(default_factory = list)
     _: KW_ONLY
     selection: int = -1
+    info: list[str] = field(default_factory = list)
 
 def init_curses(stdscr: curses.window):# {{{
     curses.raw()
@@ -607,26 +608,27 @@ def sudoku_mappings(stdwin: tui.MainWindow, big_sudoku_view: tui.PadView, small_
 
     def on_quit():
         puzzle.mode = 0 # TODO figure out how to restore this
-        on_overlay_confirm("Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1)
+        on_overlay_confirm("Are you sure you want to quit?", ("&Yes", stdwin.quit), ("&No",), selection = 1, info = ["This will lost any progress you made."])
 
     stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
-# }}}
-
 def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
-    overlay = appdata.get("overlay", None)
+    overlay: Overlay = appdata.get("overlay", None)
     assert overlay is not None
     win.erase()
     padding = 1
     maxy, maxx = win.getmaxyx()
     maxx = min(maxx, curses.COLS - (padding * 2) - 1)
-    msg = (" " * padding) + overlay.message[:maxx] + (" " * padding)
-    h = 3 + (padding * 2)
-    w = len(msg) + 2
 
-    win.addstr(padding, 1, msg, ATTR_NORMAL)
+    msg = pad_text(overlay.message[:maxx], padding)
+    info = [line[:maxx] for line in overlay.info]
+
+    h = len(info) + 4 + (padding * 2)
+    w = max(len(msg), max(len(line) for line in info)) + 2
+
     tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
+    win.addstr(padding, (w - len(msg)) // 2, msg, ATTR_NORMAL)
 
     GAP_SENTINEL = object()
     cursor_pre = ("> ", ATTR_NORMAL)
@@ -669,9 +671,14 @@ def confirm_draw(pv: tui.PadView, appdata: dict, win: curses.window):# {{{
             rendered.append(nocurs_post)
             rendered_width += len(text) + 4
 
-    gaplen = (len(msg) - rendered_width) // (len(overlay.items) + 1)
-    gap = " " * gaplen
     y = padding + 2
+    for line in info:
+        win.addstr(y, (w - len(line)) // 2, line, ATTR_NORMAL)
+        y += 1
+
+    gaplen = (w - rendered_width) // (len(overlay.items) + 1)
+    gap = " " * gaplen
+    y += 1
     x = 1
     for item in rendered:
         if item is GAP_SENTINEL:
@@ -718,7 +725,7 @@ def confirm_restore(appdata: dict, restore_cursor_fn: Callable[[int, int], bool]
     appdata["cursor_fn"] = restore_cursor_fn
 # }}}
 
-def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState, overlay_view: tui.PadView, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None], appdata: dict, msg: str, *items, selection: int = -1) -> Overlay:# {{{
+def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState, overlay_view: tui.PadView, big_sudoku_view: tui.PadView, small_sudoku_view: tui.PadView, puzzle: SudokuGrid, reset_statusbar: Callable[[], None], appdata: dict, msg: str, *items, selection: int = -1, info: list[str] | None = None) -> Overlay:# {{{
     '''items are tuples of (text, callback) or (text,), the latter of which
     will assigned the callback to quit the overlay and restore the display'''
 
@@ -736,6 +743,9 @@ def overlay_confirm(stdwin: tui.MainWindow, overlay_windraw: tui.WindowDrawState
         else:
             text, callback = item
             overlay.items.append(OverlayItem(text, callback))
+
+    if info is not None:
+        overlay.info = info
 
     appdata["overlay"] = overlay
     overlay_windraw.on_draw = partial(confirm_draw, overlay_view, appdata)
