@@ -3,7 +3,7 @@
 """
 # TODO
 
-- finish refactoring draw procedures, etc., with SudokuApp
+- test SudokuApp coverage
 - add reset command
 - refine game controls
 - implement grid scrolling
@@ -39,6 +39,7 @@ from tui import (
         L_nEsW, L_NeSw, L_NESW,
         C_es, C_sw, C_nw, C_ne)
 
+# TODO refactor
 debug_show: bool = False
 debug_vals: dict = {}
 
@@ -119,19 +120,19 @@ class SudokuApp:# {{{
         self.init_debug_screen()
         self.init_statusbar()
 
-        self.on_overlay_confirm = partial(overlay_confirm, self.stdwin, self.overlay, self.overlay_view, self.appdata)
+        self.on_overlay_confirm = partial(overlay_confirm, self)
 # }}}
     def init_big_sudoku(self):# {{{
         self.big_sudoku_win = curses.newpad(100, 100)
         self.big_sudoku_view = tui.PadView(self.big_sudoku_win, (0, 0), (2, 0), (0, 0))
         self.big_sudoku = tui.WindowDrawState(self.big_sudoku_win)
-        self.big_sudoku.on_draw = partial(big_sudoku_draw, self.appdata, self.big_sudoku_view, self.reset_statusbar)
+        self.big_sudoku.on_draw = partial(big_sudoku_draw, self)
 # }}}
     def init_small_sudoku(self):# {{{
         self.small_sudoku_win = curses.newpad(50, 50)
         self.small_sudoku_view = tui.PadView(self.small_sudoku_win, (0, 0), (2, 0), (0, 0))
         self.small_sudoku = tui.WindowDrawState(self.small_sudoku_win)
-        self.small_sudoku.on_draw = partial(small_sudoku_draw, self.appdata, self.small_sudoku_view, self.stdwin.stdcurs, self.reset_statusbar)
+        self.small_sudoku.on_draw = partial(small_sudoku_draw, self)
 # }}}
     def init_overlay(self):# {{{
         self.overlay_win = curses.newpad(100, 100)
@@ -147,12 +148,12 @@ class SudokuApp:# {{{
         self.debug_screen_win = curses.newpad(100, 100)
         self.debug_screen_view = tui.PadView(self.debug_screen_win, (0, 0), (0, 0), (0, 0))
         self.debug_screen = tui.WindowDrawState(self.debug_screen_win)
-        self.debug_screen.on_draw = partial(debug_screen_draw, self.debug_screen_view)
+        self.debug_screen.on_draw = partial(debug_screen_draw, self)
 # }}}
     def init_statusbar(self):# {{{
         self.statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
         self.statusbar = tui.WindowDrawState(self.statusbar_win)
-        self.statusbar.on_draw = partial(statusbar_draw, self.appdata)
+        self.statusbar.on_draw = partial(statusbar_draw, self)
 # }}}
 # }}}
 
@@ -165,9 +166,9 @@ def init_curses(stdscr: curses.window):# {{{
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.init_pair(2, curses.COLOR_CYAN, -1)
 
-    global ATTR_PROV, ATTR_NOTE_CURS
+    global ATTR_PROV, ATTR_NOTE
     ATTR_PROV = curses.color_pair(1)
-    ATTR_NOTE_CURS = curses.color_pair(2)
+    ATTR_NOTE = curses.color_pair(2)
 # }}}
 
 def grid_from_str(s: str, provided: bool = False) -> SudokuGrid | None:# {{{
@@ -193,6 +194,7 @@ def get_grid_cell(grid: SudokuGrid, ref: tuple[int, int] | str) -> GridCell | No
     return grid.grid[y * 9 + x]
 # }}}
 
+# TODO refactor
 def grid_lines(cell_height, cell_width) -> list[str]:# {{{
     lines = []
 
@@ -255,9 +257,9 @@ def is_small_screen(appdata: dict, reset_fn: Callable[[], None]) -> bool:# {{{
 ATTR_NORMAL = curses.A_NORMAL
 ATTR_UNDER = curses.A_UNDERLINE
 ATTR_PROV: int      # initialised by init_curses
-ATTR_NOTE_CURS: int # initialised by init_curses
+ATTR_NOTE: int # initialised by init_curses
 
-def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # {{{
+def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int:# {{{
     at_cursor = (y, x) == sudoku.cursor
     note_mode = sudoku.mode == GAMEMODE_NOTE
 
@@ -266,7 +268,7 @@ def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: # 
     elif cell.provided:
         return ATTR_PROV
     elif note_mode and at_cursor:
-        return ATTR_NOTE_CURS | curses.A_REVERSE
+        return ATTR_NOTE | curses.A_REVERSE
     elif at_cursor:
         return ATTR_NORMAL | curses.A_REVERSE
     else:
@@ -292,7 +294,9 @@ def draw_padded_cell(win: curses.window, y: int, x: int, lines: list[str], attr:
     win.addstr(y + dy, x - 1, padline, attr)
 # }}}
 
-def resize_gridviews(bigpv: tui.PadView, smallpv: tui.PadView):# {{{
+def resize_gridviews(app: SudokuApp):# {{{
+    bigpv = app.big_sudoku_view
+    smallpv = app.small_sudoku_view
     bigh, bigw_ = LARGE_GRID_SIZE
     smallh, smallw = SMALL_GRID_SIZE
     bigh = clamp(bigh, curses.LINES - 5)
@@ -328,6 +332,7 @@ def draw_big_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
             for num in range(1, 10):
                 line, col = divmod(num - 1, 3)
                 digit_lines_parts[line][col] = str(num) if num in digits else " "
+
             digit_lines = [" ".join(line) for line in digit_lines_parts]
             draw_padded_cell(win, cur_y, cur_x, digit_lines, attr)
             continue
@@ -345,9 +350,9 @@ def small_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: 
     if cell.provided:
         return ATTR_PROV
     elif note_mode and at_cursor:
-        return ATTR_NOTE_CURS
+        return ATTR_NOTE
     elif has_notes:
-        return ATTR_NOTE_CURS
+        return ATTR_NOTE
     else:
         return ATTR_NORMAL
 # }}}
@@ -374,33 +379,35 @@ def draw_small_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
         win.addstr(cur_y, cur_x + 1, digit, attr)
 # }}}
 
-def big_sudoku_draw(appdata: dict, pv: tui.PadView, reset_statusbar: Callable[[], None], win: curses.window) -> bool:# {{{
+def big_sudoku_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
+    pv = app.big_sudoku_view
     assert id(win) == id(pv.pad)
     win.erase()
-    if is_small_screen(appdata, reset_statusbar):
+    if is_small_screen(app.appdata, app.reset_statusbar):
         return True
 
-    puzzle = appdata.get("puzzle", None)
+    puzzle = app.appdata.get("puzzle", None)
     assert puzzle is not None
     draw_big_grid(pv, puzzle)
     return True
 # }}}
 
-def small_sudoku_draw(appdata: dict, pv: tui.PadView, cursor: tui.Cursor, reset_statusbar: Callable[[], None], win: curses.window):# {{{
+def small_sudoku_draw(app: SudokuApp, win: curses.window):# {{{
+    pv = app.small_sudoku_view
     assert id(win) == id(pv.pad)
     win.erase()
     # TODO refactor to prevent this being called twice
-    if is_small_screen(appdata, reset_statusbar):
+    if is_small_screen(app.appdata, app.reset_statusbar):
         return True
 
-    puzzle = appdata.get("puzzle", None)
+    puzzle = app.appdata.get("puzzle", None)
     assert puzzle is not None
 
     draw_small_grid(pv, puzzle)
     cy, cx = scale_small_grid_coords(puzzle.cursor)
     if cy > 0 and cx > 0:
         _, _, sy, sx, _, _ = tui.padview_clamp(pv)
-        cursor.cursor = (cy + sy, cx + sx + 1)
+        app.stdwin.stdcurs.cursor = (cy + sy, cx + sx + 1)
     return True
 # }}}
 
@@ -411,9 +418,9 @@ def padview_bounding_box(pv: tui.PadView) -> tuple[int, int, int, int]:# {{{
     return py, px, mpy, mpx
 # }}}
 
-def big_gridview_bounding_box(bigpv: tui.PadView, smallpv: tui.PadView) -> tuple[int, int, int, int]:# {{{
-    by, bx, mby, mbx = padview_bounding_box(bigpv)
-    _, _, _, sx, _, _ = tui.padview_clamp(smallpv)
+def big_gridview_bounding_box(app: SudokuApp) -> tuple[int, int, int, int]:# {{{
+    by, bx, mby, mbx = padview_bounding_box(app.big_sudoku_view)
+    _, _, _, sx, _, _ = tui.padview_clamp(app.small_sudoku_view)
     mbx = min(mbx, sx + bx - 1)
     return by, bx, mby, mbx
 # }}}
@@ -428,8 +435,8 @@ def big_sudoku_grid_cell_bounding_box(coords: tuple[int, int]) -> tuple[int, int
     return cy, cx, mcy, mcx
 # }}}
 
-def nudge_coords_into_view(bigpv: tui.PadView, smallpv: tui.PadView, coords: tuple[int, int]):# {{{
-    py, px, mpy, mpx = big_gridview_bounding_box(bigpv, smallpv)
+def nudge_coords_into_view(app, coords: tuple[int, int]):# {{{
+    py, px, mpy, mpx = big_gridview_bounding_box(app)
     cy, cx, mcy, mcx = big_sudoku_grid_cell_bounding_box(coords)
 
     nudgey = 0
@@ -444,24 +451,28 @@ def nudge_coords_into_view(bigpv: tui.PadView, smallpv: tui.PadView, coords: tup
     elif mcx > mpx:
         nudgex = mcx - mpx
 
-    bigpv.pad_start = (py + nudgey, px + nudgex)
+    app.big_sudoku_view.pad_start = (py + nudgey, px + nudgex)
 # }}}
 
-def sudoku_move_abs_cursor(bigpv: tui.PadView, smallpv: tui.PadView, sudoku: SudokuGrid, *, y: int | None = None, x: int | None = None):# {{{
-    oldy, oldx = sudoku.cursor
+def sudoku_move_abs_cursor(app:  SudokuApp, *, y: int | None = None, x: int | None = None):# {{{
+    bigpv = app.big_sudoku_view
+    smallpv = app.small_sudoku_view
+    oldy, oldx = app.puzzle.cursor
     newy = y if y is not None else oldy
     newx = x if x is not None else oldx
-    sudoku.cursor = (newy, newx)
-    nudge_coords_into_view(bigpv, smallpv, (newy, newx))
+    app.puzzle.cursor = (newy, newx)
+    nudge_coords_into_view(app, (newy, newx))
 # }}}
 
-def sudoku_move_rel_cursor(bigpv: tui.PadView, smallpv: tui.PadView, sudoku: SudokuGrid, *, y: int = 0, x: int = 0) -> bool: # {{{
+def sudoku_move_rel_cursor(app: SudokuApp, *, y: int = 0, x: int = 0) -> bool: # {{{
     '''Returns True if cursor changed, otherwise False'''
-    oldy, oldx = sudoku.cursor
+    bigpv = app.big_sudoku_view
+    smallpv = app.small_sudoku_view
+    oldy, oldx = app.puzzle.cursor
     newy = (oldy + y) % 9
     newx = (oldx + x) % 9
-    sudoku.cursor = (newy, newx)
-    nudge_coords_into_view(bigpv, smallpv, (newy, newx))
+    app.puzzle.cursor = (newy, newx)
+    nudge_coords_into_view(app, (newy, newx))
     return (oldy, oldx) != (newy, newx)
 # }}}
 
@@ -474,7 +485,8 @@ def sudoku_mode(sudoku: SudokuGrid) -> str:# {{{
 # }}}
 
 # TODO refactor as Actions
-def sudoku_ins(sudoku: SudokuGrid, digit: int):# {{{
+def sudoku_ins(app: SudokuApp, digit: int):# {{{
+    sudoku = app.puzzle
     if digit < 1 or digit > 9: return
     cy, cx = sudoku.cursor
     index = 9 * cy + cx
@@ -494,7 +506,8 @@ def sudoku_ins(sudoku: SudokuGrid, digit: int):# {{{
 # }}}
 
 # TODO refactor as Actions
-def sudoku_del(sudoku: SudokuGrid):# {{{
+def sudoku_del(app: SudokuApp):# {{{
+    sudoku = app.puzzle
     cy, cx = sudoku.cursor
     i = 9 * cy + cx
     if sudoku.grid[i].provided: return
@@ -510,8 +523,9 @@ def sudoku_toggle_note_mode(sudoku: SudokuGrid):# {{{
     sudoku.mode = GAMEMODE_NORMAL if sudoku.mode == GAMEMODE_NOTE else GAMEMODE_NOTE
 # }}}
 
-def debug_screen_draw(pv: tui.PadView, win: curses.window) -> bool:# {{{
+def debug_screen_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
     global debug_show, debug_vals
+    pv = app.debug_screen_view
     assert id(pv.pad) == id(win)
     win.erase()
     if debug_show:
@@ -545,8 +559,8 @@ def titlebar_draw(win: curses.window) -> bool:# {{{
     return True
 # }}}
 
-def statusbar_draw(appdata: dict, win: curses.window) -> bool:# {{{
-    status = appdata.get("status", "")
+def statusbar_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
+    status = app.appdata.get("status", "")
     win.mvwin(curses.LINES - 1, 0)
     _, maxx = win.getmaxyx()
     win.erase()
@@ -570,16 +584,16 @@ def map_window(app: SudokuApp):# {{{
 
     def on_resize():
         curses.update_lines_cols()
-        resize_gridviews(app.big_sudoku_view, app.small_sudoku_view)
+        resize_gridviews(app)
         app.big_sudoku_view.pad_start = (0, 0)
-        nudge_coords_into_view(app.big_sudoku_view, app.small_sudoku_view, app.puzzle.cursor)
+        nudge_coords_into_view(app, app.puzzle.cursor)
         app.stdwin.refresh()
 
     app.stdwin.add_mapping(tui.askey("KEY_RESIZE"), on_resize)
 
     def on_reset():
         stdscr.clear()
-        reset_statusbar()
+        app.reset_statusbar()
         app.stdwin.refresh()
 
     app.stdwin.add_mapping(tui.askey("C-L"), on_reset)
@@ -626,10 +640,10 @@ def map_base(app: SudokuApp):# {{{
     map_cursor(app)
 # }}}
 
-def sudoku_restore(stdwin: tui.MainWindow, on_move_sudoku_cursor: Callable[[], None], puzzle: SudokuGrid, appdata: dict, restore_cursor: tuple[int, int], restore_mode: int):# {{{
-    appdata["cursor_fn"] = on_move_sudoku_cursor
-    puzzle.cursor = restore_cursor
-    puzzle.mode = restore_mode
+def sudoku_restore(app: SudokuApp, on_move_sudoku_cursor: Callable[[], None], restore_cursor: tuple[int, int], restore_mode: int):# {{{
+    app.appdata["cursor_fn"] = on_move_sudoku_cursor
+    app.puzzle.cursor = restore_cursor
+    app.puzzle.mode = restore_mode
 # }}}
 
 def map_final_quit(stdwin: tui.MainWindow):# {{{
@@ -637,11 +651,11 @@ def map_final_quit(stdwin: tui.MainWindow):# {{{
 # }}}
 
 def map_sudoku(app: SudokuApp):# {{{
-    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app.big_sudoku_view, app.small_sudoku_view, app.puzzle)
+    on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app)
     app.appdata["cursor_fn"] = on_move_sudoku_cursor
 
     def on_move_abs(y: int | None = None, x: int | None = None):
-        sudoku_move_abs_cursor(app.big_sudoku_view, app.small_sudoku_view, app.puzzle, y = y, x = x)
+        sudoku_move_abs_cursor(app, y = y, x = x)
         app.stdwin.refresh()
 
     mv_first = partial(on_move_abs, x = 0)
@@ -661,7 +675,7 @@ def map_sudoku(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("KEY_PPAGE"), mv_top)
 
     def on_delete():
-        sudoku_del(app.puzzle)
+        sudoku_del(app)
         app.stdwin.refresh()
 
     app.stdwin.add_mapping(tui.askey("KEY_BACKSPACE"), on_delete)
@@ -678,13 +692,13 @@ def map_sudoku(app: SudokuApp):# {{{
 
 
     def on_digit(digit: int):
-        sudoku_ins(app.puzzle, digit)
+        sudoku_ins(app, digit)
         app.stdwin.refresh()
 
     for digit in range(1, 10):
         app.stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
-    on_post_restore = partial(sudoku_restore, app.stdwin, on_move_sudoku_cursor, app.puzzle, app.appdata)
+    on_post_restore = partial(sudoku_restore, app, on_move_sudoku_cursor)
     QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
     QUIT_CONFIRM_ITMS = (("&Yes", app.stdwin.quit), ("&No",))
     QUIT_CONFIRM_KWARGS = {
@@ -705,8 +719,9 @@ def map_sudoku(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
-def confirm_draw(pv: tui.PadView, cursor: tui.Cursor, appdata: dict, win: curses.window):# {{{
-    overlay: Overlay = appdata.get("overlay", None)
+def confirm_draw(app: SudokuApp, win: curses.window):# {{{
+    pv = app.overlay_view
+    overlay: Overlay = app.appdata.get("overlay", None)
     assert overlay is not None
     win.erase()
     padding = 1
@@ -791,7 +806,7 @@ def confirm_draw(pv: tui.PadView, cursor: tui.Cursor, appdata: dict, win: curses
     pv.desired_view_size = (h, w - 1)
     pv.desired_screen_start = (sy, sx)
     selection = overlay.selection
-    cursor.cursor = (sy + y, sx + rendered_starts[selection] + (gaplen * (selection + 1)) + 3)
+    app.stdwin.stdcurs.cursor = (sy + y, sx + rendered_starts[selection] + (gaplen * (selection + 1)) + 3)
     return True
 # }}}
 
@@ -822,16 +837,19 @@ def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]
     return accel_keys
 # }}}
 
-def overlay_confirm(stdwin: tui.MainWindow, windraw: tui.WindowDrawState, pv: tui.PadView, appdata: dict, post_restore: Callable[[], None], msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[], None] | None = None) -> Overlay:# {{{
+def overlay_confirm(app: SudokuApp, post_restore: Callable[[], None], msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[], None] | None = None) -> Overlay:# {{{
     '''items are tuples of (text, callback) or (text,), the latter of which
     will assigned the callback to quit the overlay and restore the display
 
-    Calls stdwin.refresh()'''
+    Calls app.stdwin.refresh()'''
+
+    windraw = app.overlay
+    pv = app.overlay_view
 
     assert windraw.on_draw is None
-    dp = tui.DisplayRestore(stdwin, windraw, pv, post_restore)
-    stdwin.keymap = collections.OrderedDict()
-    appdata["cursor_fn"] = partial(confirm_move_cursor, appdata)
+    dp = tui.DisplayRestore(app.stdwin, windraw, pv, post_restore)
+    app.stdwin.keymap = collections.OrderedDict()
+    app.appdata["cursor_fn"] = partial(confirm_move_cursor, app.appdata)
 
     on_confirm_restore = partial(tui.display_restore, dp)
     overlay = Overlay(msg)
@@ -848,21 +866,21 @@ def overlay_confirm(stdwin: tui.MainWindow, windraw: tui.WindowDrawState, pv: tu
     if info is not None:
         overlay.info = info
 
-    appdata["overlay"] = overlay
-    windraw.on_draw = partial(confirm_draw, pv, stdwin.stdcurs, appdata)
+    app.appdata["overlay"] = overlay
+    windraw.on_draw = partial(confirm_draw, app)
 
     if on_map is not None:
         on_map()
 
-    on_select = partial(confirm_select_cursor, appdata)
-    stdwin.add_mapping(tui.askey("KEY_ENTER"), on_select)
-    stdwin.add_mapping(tui.askey("C-J"), on_select)
+    on_select = partial(confirm_select_cursor, app.appdata)
+    app.stdwin.add_mapping(tui.askey("KEY_ENTER"), on_select)
+    app.stdwin.add_mapping(tui.askey("C-J"), on_select)
 
     for key, callback in overlay_accel_keys(overlay):
         if key not in ACCEL_KEYS_BLACKLIST:
-            stdwin.add_mapping(tui.askey(key), callback)
+            app.stdwin.add_mapping(tui.askey(key), callback)
 
-    stdwin.refresh()
+    app.stdwin.refresh()
 # }}}
 
 EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
@@ -882,7 +900,7 @@ def main(stdwin: tui.MainWindow):
 
     stdwin.stdcurs.cursor = (-1, -1)
     app.reset_statusbar()
-    resize_gridviews(app.big_sudoku_view, app.small_sudoku_view)
+    resize_gridviews(app)
     stdwin.refresh()
 
     map_base(app)
