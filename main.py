@@ -28,7 +28,7 @@ from itertools import repeat
 import tui
 
 from util import clamp, pad_text, Invoke
-from tui import (
+from tui import (# {{{
         L_ew, L_ns,
         L_es, L_sw, L_ne, L_nw,
         L_nes, L_nsw, L_esw, L_new, L_nesw,
@@ -42,7 +42,7 @@ from tui import (
         L_EsW, L_eSw, L_ESW,
         L_nEW, L_New, L_NEW,
         L_nEsW, L_NeSw, L_NESW,
-        C_es, C_sw, C_nw, C_ne)
+        C_es, C_sw, C_nw, C_ne)# }}}
 
 font_l = [# {{{
           ("▐▛▀▜▌", "▐▙▞▜▌", "▐▙▄▟▌"), # 0
@@ -77,6 +77,7 @@ class GridCell:
     num: int | None
     notes: tuple[int,...] = tuple()
     provided: bool = False
+    incorrect: bool = False
 
 GAMEMODE_NONE   = 0
 GAMEMODE_NORMAL = 1
@@ -169,18 +170,26 @@ class SudokuApp:
         self.stdwin.add_child(self.statusbar)
 # }}}
 
+ATTR_NORMAL = curses.A_NORMAL
+ATTR_UNDER = curses.A_UNDERLINE
+ATTR_PROV: int      # initialised by init_curses
+ATTR_NOTE: int # initialised by init_curses
+ATTR_WRONG: int # initialised by init_curses
+
 def init_curses(stdscr: curses.window):# {{{
     curses.raw()
     curses.use_default_colors()
 
     # init colors
-    assert curses.COLOR_PAIRS > 3
+    assert curses.COLOR_PAIRS > 4
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.init_pair(2, curses.COLOR_CYAN, -1)
+    curses.init_pair(3, curses.COLOR_RED, -1)
 
-    global ATTR_PROV, ATTR_NOTE
+    global ATTR_PROV, ATTR_NOTE, ATTR_WRONG
     ATTR_PROV = curses.color_pair(1)
     ATTR_NOTE = curses.color_pair(2)
+    ATTR_WRONG = curses.color_pair(3)
 # }}}
 
 def grid_from_str(s: str, provided: bool = False) -> SudokuGrid | None:# {{{
@@ -242,11 +251,6 @@ def is_small_screen() -> bool:# {{{
     return SMALL_GRID_SIZE[0] > curses.LINES - SUDOKU_GRID_MARGIN
 # }}}
 
-ATTR_NORMAL = curses.A_NORMAL
-ATTR_UNDER = curses.A_UNDERLINE
-ATTR_PROV: int      # initialised by init_curses
-ATTR_NOTE: int # initialised by init_curses
-
 def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int:# {{{
     at_cursor = (y, x) == sudoku.cursor
     note_mode = sudoku.mode == GAMEMODE_NOTE
@@ -255,6 +259,10 @@ def big_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int:# {
         return ATTR_PROV | curses.A_REVERSE
     elif cell.provided:
         return ATTR_PROV
+    elif cell.incorrect and at_cursor:
+        return ATTR_WRONG | curses.A_REVERSE
+    elif cell.incorrect:
+        return ATTR_WRONG
     elif note_mode and at_cursor:
         return ATTR_NOTE | curses.A_REVERSE
     elif at_cursor:
@@ -337,6 +345,8 @@ def small_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: 
 
     if cell.provided:
         return ATTR_PROV
+    elif cell.incorrect:
+        return ATTR_WRONG
     else:
         return ATTR_NORMAL
 # }}}
@@ -466,6 +476,32 @@ MAX_MODE_STRING = len(MODE_STRINGS)
 def sudoku_mode(sudoku: SudokuGrid) -> str:# {{{
     return MODE_STRINGS[clamp(sudoku.mode, MAX_MODE_STRING, 0)]
 # }}}
+
+def sudoku_row(puzzle: SudokuGrid, y: int) -> tuple[GridCell]:
+    return tuple(puzzle.grid[9 * y + x] for x in range(9))
+
+def sudoku_col(puzzle: SudokuGrid, x: int) -> tuple[GridCell]:
+    return tuple(puzzle.grid[9 * y + x] for y in range(9))
+
+def sudoku_box(puzzle: SudokuGrid, index: int) -> tuple[GridCell]:
+    iy, ix = divmod(index, 9)
+    boxy = (iy // 3) * 3
+    boxx = (ix // 3) * 3
+    cells = []
+    for i in range()
+
+
+
+    boxy, boxx = divmod(boxnum, 3)
+    cells = []
+    for i in range(9):
+        y, x = divmod(i, 3)
+        cell.append()
+
+#def sudoku_check_errors(puzzle: SudokuGrid) -> list[tuple[GridCell, ...]]:# {{{
+#    # check rows
+#    for y in range(9):
+## }}}
 
 # TODO refactor as Actions
 def sudoku_ins(app: SudokuApp, digit: int):# {{{
