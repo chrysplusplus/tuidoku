@@ -10,6 +10,13 @@
 - implement puzzle generation
 - implement undo
 - implement line and box guides
+
+## Notes from Playtesting
+
+- you shouldnt need to enter notewriting mode to delete notes
+- notes in minimap are clutter
+- controls information underneath small grid
+
 """
 
 import curses
