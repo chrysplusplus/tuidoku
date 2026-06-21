@@ -13,7 +13,6 @@
 
 ## Notes from Playtesting
 
-- you shouldnt need to enter notewriting mode to delete notes
 - controls information underneath small grid
 
 """
@@ -492,11 +491,9 @@ def sudoku_del(app: SudokuApp):# {{{
     cy, cx = sudoku.cursor
     i = 9 * cy + cx
     if sudoku.grid[i].provided: return
-    if sudoku.mode == GAMEMODE_NORMAL:
+    if sudoku.grid[i].num is not None:
         sudoku.grid[i].num = None
-    elif sudoku.mode == GAMEMODE_NOTE and sudoku.grid[i].num is not None:
-        sudoku.grid[i].num = None
-    elif sudoku.mode == GAMEMODE_NOTE:
+    else:
         sudoku.grid[i].notes = tuple()
 # }}}
 
@@ -670,7 +667,6 @@ def map_sudoku(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("n"), on_toggle_notes)
     app.stdwin.add_mapping(tui.askey("0"), on_toggle_notes)
     app.stdwin.add_mapping(tui.askey("KEY_IC"), on_toggle_notes)
-
 
     def on_digit(digit: int):
         sudoku_ins(app, digit)
