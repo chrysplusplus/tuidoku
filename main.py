@@ -3,8 +3,8 @@
 """
 # TODO
 
+- optimising draws
 - test SudokuApp coverage
-- add reset command
 - refine game controls
 - implement grid scrolling
 - implement puzzle generation
@@ -107,11 +107,7 @@ class SudokuApp:
         self.stdwin = stdwin
         self.puzzle_input = puzzle_input
         self.puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
-        self.appdata = {
-                "default_status": partial(sudoku_mode, self.puzzle),
-                "sudoku_draw_last_err": False,
-                "puzzle_input": self.puzzle_input,
-                "puzzle": self.puzzle}
+        self.appdata = { "default_status": partial(sudoku_mode, self.puzzle) }
         self.reset_statusbar = partial(statusbar_reset, self.appdata)
 
         self.init_big_sudoku()
@@ -379,9 +375,7 @@ def big_sudoku_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
         app.appdata["small_screen"] = False
         app.reset_statusbar()
 
-    puzzle = app.appdata.get("puzzle", None)
-    assert puzzle is not None
-    draw_big_grid(pv, puzzle)
+    draw_big_grid(pv, app.puzzle)
     return True
 # }}}
 
@@ -392,11 +386,8 @@ def small_sudoku_draw(app: SudokuApp, win: curses.window):# {{{
     if app.appdata.get("small_screen", False):
         return True
 
-    puzzle = app.appdata.get("puzzle", None)
-    assert puzzle is not None
-
-    draw_small_grid(pv, puzzle)
-    cy, cx = scale_small_grid_coords(puzzle.cursor)
+    draw_small_grid(pv, app.puzzle)
+    cy, cx = scale_small_grid_coords(app.puzzle.cursor)
     if cy > 0 and cx > 0:
         _, _, sy, sx, _, _ = tui.padview_clamp(pv)
         app.stdwin.stdcurs.cursor = (cy + sy, cx + sx + 1)
@@ -666,10 +657,6 @@ def sudoku_restore(app: SudokuApp, on_move_sudoku_cursor: Callable[[], None], re
     app.puzzle.mode = restore_mode
 # }}}
 
-def map_final_quit(stdwin: tui.MainWindow):# {{{
-    stdwin.add_mapping(tui.askey("q"), stdwin.quit)
-# }}}
-
 def map_sudoku(app: SudokuApp):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app)
     app.appdata["cursor_fn"] = on_move_sudoku_cursor
@@ -718,6 +705,33 @@ def map_sudoku(app: SudokuApp):# {{{
         app.stdwin.add_mapping(tui.askey(str(digit)), partial(on_digit, digit))
 
     on_post_restore = partial(sudoku_restore, app, on_move_sudoku_cursor)
+
+    def do_reset():
+        app.puzzle = grid_from_str(app.puzzle_input, provided = True)
+        assert app.puzzle is not None
+        app.stdwin.keymap.clear()
+        map_base(app)
+        map_sudoku(app)
+        nudge_coords_into_view(app, app.puzzle.cursor)
+        app.stdwin.refresh()
+
+    RESET_CONFIRM_MSG = "Are you sure you want to reset?"
+    RESET_CONFIRM_ITMS = (("Yes", do_reset), ("&No",))
+    RESET_CONFIRM_KWARGS = {
+            "selection": 1,
+            "info": ["This will lose any progress you've made."],
+            "on_map": partial(map_base, app)}
+
+    def on_reset():
+        restore_cursor = app.puzzle.cursor
+        restore_mode = app.puzzle.mode
+        app.puzzle.cursor = (-1, -1)
+        app.puzzle.mode = 0
+        fn = partial(on_post_restore, restore_cursor, restore_mode)
+        app.on_overlay_confirm(fn, RESET_CONFIRM_MSG, *RESET_CONFIRM_ITMS, **RESET_CONFIRM_KWARGS)
+
+    app.stdwin.add_mapping(tui.askey("r"), on_reset)
+
     QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
     QUIT_CONFIRM_ITMS = (("Yes", app.stdwin.quit), ("&No",))
     QUIT_CONFIRM_KWARGS = {
@@ -854,10 +868,9 @@ def overlay_accel_keys(overlay: Overlay) -> list[tuple[str, Callable[[], None]]]
 # }}}
 
 def overlay_confirm(app: SudokuApp, post_restore: Callable[[], None], msg: str, *items, selection: int | None = None, info: list[str] | None = None, on_map: Callable[[], None] | None = None) -> Overlay:# {{{
-    '''items are tuples of (text, callback) or (text,), the latter of which
-    will assigned the callback to quit the overlay and restore the display
-
-    Calls app.stdwin.refresh()'''
+    '''`items` are tuples of (text, callback) or (text,). `callback`, if
+    provided, is called after the display is restored to the pre-overlay
+    state.'''
 
     windraw = app.overlay
     pv = app.overlay_view
@@ -874,7 +887,7 @@ def overlay_confirm(app: SudokuApp, post_restore: Callable[[], None], msg: str, 
             overlay.items.append(OverlayItem(item[0], on_confirm_restore))
         else:
             text, callback = item
-            overlay.items.append(OverlayItem(text, callback))
+            overlay.items.append(OverlayItem(text, Invoke(on_confirm_restore).then(callback)))
 
     if selection is not None:
         overlay.selection = selection
