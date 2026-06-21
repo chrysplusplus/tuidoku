@@ -677,13 +677,11 @@ def map_sudoku(app: SudokuApp):# {{{
 
     on_post_restore = partial(sudoku_restore, app, on_move_sudoku_cursor)
     QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
-    QUIT_CONFIRM_ITMS = (("&Yes", app.stdwin.quit), ("&No",))
+    QUIT_CONFIRM_ITMS = (("Yes", app.stdwin.quit), ("&No",))
     QUIT_CONFIRM_KWARGS = {
             "selection": 1,
-            "info": [
-                "This will lose any progress you've made.",
-                "(You can hit 'q' again to exit.)"],
-            "on_map": Invoke(partial(map_base, app)).then(partial(map_final_quit, app.stdwin))}
+            "info": ["This will lose any progress you've made."],
+            "on_map": partial(map_base, app)}
 
     def on_quit():
         restore_cursor = app.puzzle.cursor
@@ -752,7 +750,6 @@ def confirm_draw(app: SudokuApp, win: curses.window):# {{{
             rendered_width += len(text) + 3
 
         else:
-            rendered.append(GAP_SENTINEL)
             rendered.append(GAP_SENTINEL)
             rendered.append(nocurs_pre)
             rendered.append((text, ATTR_NORMAL))
