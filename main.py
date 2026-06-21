@@ -44,10 +44,6 @@ from tui import (
         L_nEsW, L_NeSw, L_NESW,
         C_es, C_sw, C_nw, C_ne)
 
-# TODO refactor
-debug_show: bool = False
-debug_vals: dict = {}
-
 font_l = [# {{{
           ("▐▛▀▜▌", "▐▙▞▜▌", "▐▙▄▟▌"), # 0
           (" ▄█  ", "  █  ", " ▄█▄ "), # 1
@@ -132,33 +128,42 @@ class SudokuApp:
         self.big_sudoku_view = tui.PadView(self.big_sudoku_win, (0, 0), (2, 0), (0, 0))
         self.big_sudoku = tui.WindowDrawState(self.big_sudoku_win)
         self.big_sudoku.on_draw = partial(big_sudoku_draw, self)
+        self.stdwin.add_child(self.big_sudoku, self.big_sudoku_view)
 # }}}
     def init_small_sudoku(self):# {{{
         self.small_sudoku_win = curses.newpad(50, 50)
         self.small_sudoku_view = tui.PadView(self.small_sudoku_win, (0, 0), (2, 0), (0, 0))
         self.small_sudoku = tui.WindowDrawState(self.small_sudoku_win)
         self.small_sudoku.on_draw = partial(small_sudoku_draw, self)
+        self.stdwin.add_child(self.small_sudoku, self.small_sudoku_view)
 # }}}
     def init_overlay(self):# {{{
         self.overlay_win = curses.newpad(100, 100)
         self.overlay_view = tui.PadView(self.overlay_win, (0, 0), (0, 0), (0, 0))
         self.overlay = tui.WindowDrawState(self.overlay_win)
+        self.stdwin.add_child(self.overlay, self.overlay_view)
 # }}}
     def init_titlebar(self):# {{{
         self.titlebar_win = curses.newwin(1, curses.COLS, 0, 0)
         self.titlebar = tui.WindowDrawState(self.titlebar_win)
         self.titlebar.on_draw = titlebar_draw
+        self.stdwin.add_child(self.titlebar)
 # }}}
     def init_debug_screen(self):# {{{
         self.debug_screen_win = curses.newpad(100, 100)
         self.debug_screen_view = tui.PadView(self.debug_screen_win, (0, 0), (0, 0), (0, 0))
         self.debug_screen = tui.WindowDrawState(self.debug_screen_win)
         self.debug_screen.on_draw = partial(debug_screen_draw, self)
+        self.stdwin.add_child(self.debug_screen, self.debug_screen_view)
+
+        self.debug_show = False
+        self.debug_vals = {}
 # }}}
     def init_statusbar(self):# {{{
         self.statusbar_win = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
         self.statusbar = tui.WindowDrawState(self.statusbar_win)
         self.statusbar.on_draw = partial(statusbar_draw, self)
+        self.stdwin.add_child(self.statusbar)
 # }}}
 
 def init_curses(stdscr: curses.window):# {{{
@@ -502,19 +507,21 @@ def sudoku_toggle_note_mode(sudoku: SudokuGrid):# {{{
 # }}}
 
 def debug_screen_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
-    global debug_show, debug_vals
     pv = app.debug_screen_view
     assert id(pv.pad) == id(win)
     win.erase()
-    if debug_show:
+    if app.debug_show:
         maxy, maxx = win.getmaxyx()
         maxx = min(maxx, curses.COLS - 1)
         assert maxy > 2
         win.addstr(0, 0, "Debug", ATTR_NORMAL)
         y = 1
         w = 6
-        for key, value in debug_vals.items():
-            line = f"{key}: {value}"[:maxx + 0]
+        for key, value in app.debug_vals.items():
+            if callable(value):
+                value = value()
+
+            line = f"{key}: {value}"[:maxx]
             w = max(w, len(line))
             win.addstr(y, 0, line, ATTR_NORMAL)
             y += 1
@@ -577,8 +584,7 @@ def map_window(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("C-L"), on_reset)
 
     def on_debug_toggle():
-        global debug_show
-        debug_show = not debug_show
+        app.debug_show = not app.debug_show
         app.stdwin.refresh()
 
     app.stdwin.add_mapping(tui.askey("g"), on_debug_toggle)
@@ -864,13 +870,8 @@ def main(stdwin: tui.MainWindow):
     puzzle_input = EXAMPLE_PUZZLE
     app = SudokuApp(stdwin, puzzle_input)
 
-    stdwin.add_child(app.big_sudoku, app.big_sudoku_view)
-    stdwin.add_child(app.small_sudoku, app.small_sudoku_view)
-
-    stdwin.add_child(app.overlay, app.overlay_view)
-    stdwin.add_child(app.titlebar)
-    stdwin.add_child(app.debug_screen, app.debug_screen_view)
-    stdwin.add_child(app.statusbar)
+    app.debug_vals['sg'] = partial(tui.padview_clamp, app.small_sudoku_view)
+    app.debug_vals['bg'] = partial(tui.padview_clamp, app.big_sudoku_view)
 
     stdwin.stdcurs.cursor = (-1, -1)
     app.reset_statusbar()
