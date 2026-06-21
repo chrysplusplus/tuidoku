@@ -14,7 +14,6 @@
 ## Notes from Playtesting
 
 - you shouldnt need to enter notewriting mode to delete notes
-- notes in minimap are clutter
 - controls information underneath small grid
 
 """
@@ -331,10 +330,6 @@ def small_cell_attr(y: int, x: int, cell: GridCell, sudoku: SudokuGrid) -> int: 
 
     if cell.provided:
         return ATTR_PROV
-    elif note_mode and at_cursor:
-        return ATTR_NOTE
-    elif has_notes:
-        return ATTR_NOTE
     else:
         return ATTR_NORMAL
 # }}}
@@ -356,8 +351,6 @@ def draw_small_grid(pv: tui.PadView, puzzle: SudokuGrid):# {{{
         digit = ' '
         if cell.num is not None:
             digit = str(cell.num)
-        elif len(cell.notes) != 0:
-            digit = 'n'
         win.addstr(cur_y, cur_x + 1, digit, attr)
 # }}}
 
