@@ -101,7 +101,7 @@ class Overlay:
     selection: int = -1
     info: list[str] = field(default_factory = list)
 
-class SudokuApp:# {{{
+class SudokuApp:
     def __init__(self, stdwin: tui.MainWindow, puzzle_input: str):# {{{
         self.stdwin = stdwin
         self.puzzle_input = puzzle_input
@@ -155,7 +155,6 @@ class SudokuApp:# {{{
         self.statusbar = tui.WindowDrawState(self.statusbar_win)
         self.statusbar.on_draw = partial(statusbar_draw, self)
 # }}}
-# }}}
 
 def init_curses(stdscr: curses.window):# {{{
     curses.raw()
@@ -194,41 +193,28 @@ def get_grid_cell(grid: SudokuGrid, ref: tuple[int, int] | str) -> GridCell | No
     return grid.grid[y * 9 + x]
 # }}}
 
-# TODO refactor
 def grid_lines(cell_height, cell_width) -> list[str]:# {{{
-    lines = []
+    line_format = "{outer_left}" + "{box_border}".join(repeat("{cell_border}".join(repeat("{cell_inner}" * cell_width, 3)), 3)) + "{outer_right}"
 
-    lines.append("{}{}{}".format(
-        L_ES,
-        L_ESW.join(repeat(L_EsW.join(repeat(L_EW * cell_width, 3)), 3)),
-        L_SW))
+    line_outer_top = line_format.format(outer_left = L_ES, outer_right = L_SW, box_border = L_ESW, cell_border = L_EsW, cell_inner = L_EW)
+    line_outer_bottom = line_format.format(outer_left = L_NE, outer_right = L_NW, box_border = L_NEW, cell_border = L_nEW, cell_inner = L_EW)
+    line_box_border = line_format.format(outer_left = L_NES, outer_right = L_NSW, box_border = L_NESW, cell_border = L_nEsW, cell_inner = L_EW)
+    line_cell_border = line_format.format(outer_left = L_NeS, outer_right = L_NSw, box_border = L_NeSw, cell_border = L_nesw, cell_inner = L_ew)
+    line_cell_inner = line_format.format(outer_left = L_NS, outer_right = L_NS, box_border = L_NS, cell_border = L_ns, cell_inner = " ")
 
-    for box_row in range(3):
-        for row in range(3):
-            for y in range(cell_height):
-                lines.append("{}{}{}".format(
-                    L_NS,
-                    L_NS.join(repeat(L_ns.join(repeat(" " * cell_width, 3)), 3)),
-                    L_NS))
+    cell_lines = list(repeat(line_cell_inner, cell_height))
+    box_lines = cell_lines.copy()
+    for lines in repeat(cell_lines, 3 - 1): # 3 cell rows (1 already accounted for)
+        box_lines.append(line_cell_border)
+        box_lines += lines
 
-            if row < 2:
-                lines.append("{}{}{}".format(
-                    L_NeS,
-                    L_NeSw.join(repeat(L_nesw.join(repeat(L_ew * cell_width, 3)), 3)),
-                    L_NSw))
+    grid = [line_outer_top] + box_lines
+    for lines in repeat(box_lines, 3 - 1): # 3 box rows (1 already accounted for)
+        grid.append(line_box_border)
+        grid += lines
 
-        if box_row < 2:
-            lines.append("{}{}{}".format(
-                L_NES,
-                L_NESW.join(repeat(L_nEsW.join(repeat(L_EW * cell_width, 3)), 3)),
-                L_NSW))
-
-    lines.append("{}{}{}".format(
-        L_NE,
-        L_NEW.join(repeat(L_nEW.join(repeat(L_EW * cell_width, 3)), 3)),
-        L_NW))
-
-    return lines
+    grid.append(line_outer_bottom)
+    return grid
 # }}}
 
 LARGE_GRID = grid_lines(5, 9)
