@@ -116,6 +116,7 @@ class SudokuApp:
 
         self.init_big_sudoku()
         self.init_small_sudoku()
+        self.init_information()
         self.init_overlay()
         self.init_titlebar()
         self.init_debug_screen()
@@ -136,6 +137,12 @@ class SudokuApp:
         self.small_sudoku = tui.WindowDrawState(self.small_sudoku_win)
         self.small_sudoku.on_draw = partial(small_sudoku_draw, self)
         self.stdwin.add_child(self.small_sudoku, self.small_sudoku_view)
+# }}}
+    def init_information(self):# {{{
+        self.information_win = curses.newwin(1, 1, 1, 0)
+        self.information = tui.WindowDrawState(self.information_win)
+        self.information.on_draw = partial(information_draw, self)
+        self.stdwin.add_child(self.information)
 # }}}
     def init_overlay(self):# {{{
         self.overlay_win = curses.newpad(100, 100)
@@ -533,6 +540,35 @@ def debug_screen_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
     else:
         pv.desired_view_size = (0, 0)
 
+    return True
+# }}}
+
+def information_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
+    WIN_SIZE = (11, 33)
+    win.erase()
+    h, w = WIN_SIZE
+    py, px, psy, psx, ph, pw = tui.padview_clamp(app.small_sudoku_view)
+
+    y = ph + 1
+    x = psx + 1
+    h = curses.LINES - y
+    w = curses.COLS - x
+
+    if h <= 0 or w <= 0:
+        return False
+
+    win.resize(h, w)
+    win.mvwin(y, x)
+    lines = [
+            "How to Play",
+            "-----------",
+            "←↑↓→ or wasd : move cursor",
+            "         1-9 : enter digit",
+            "      n or 0 : toggle `note` mode",
+            "           q : quit",
+            "           r : reset"]
+    lines = [l[:w + 1] for l in lines]
+    tui.win_addlines(win, lines[:h])
     return True
 # }}}
 
