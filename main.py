@@ -1049,7 +1049,7 @@ def handle_events(app: SudokuApp):# {{{
 
         if event.type == EVENT_SUDOKU_SOLVED.type:
             solved_msg = "You Win!"
-            solved_itms = (("New Game", partial(new_game, app)), ("Look at Grid",), ("Quit", app.stdwin.quit))
+            solved_itms = (("New Game", partial(new_game, app)), ("Back to Grid",), ("Quit", app.stdwin.quit))
             solved_kwargs = {
                     "selection": 0,
                     "info": ["What would you like to do?"],
