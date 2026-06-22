@@ -3,6 +3,9 @@
 """
 # TODO
 
+- refactor appdata cursor_fn
+- command for hiding small grid
+- clearer errors on small grid
 - extended colour support
 - optimising draws
 - test SudokuApp coverage
@@ -24,7 +27,9 @@ from itertools import groupby, repeat
 
 import tui
 
-from util import clamp, pad_text, Invoke
+from util import clamp, pad_text, Invoke, make_type
+from puzzles import random as random_puzzle
+
 from tui import (# {{{
         L_ew, L_ns,
         L_es, L_sw, L_ne, L_nw,
@@ -100,6 +105,14 @@ class Overlay:
     selection: int = -1
     info: list[str] = field(default_factory = list)
 
+@dataclass(slots = True)
+class Event:
+    type: type
+    data: dict = field(default_factory = dict)
+
+EVENT_SUDOKU_CHANGED = Event(make_type("EVENT_SUDOKU_CHANGED"))
+EVENT_SUDOKU_SOLVED = Event(make_type("EVENT_SUDOKU_SOLVED"))
+
 class SudokuApp:
     def __init__(self, stdwin: tui.MainWindow, puzzle_input: str):# {{{
         self.stdwin = stdwin
@@ -107,6 +120,10 @@ class SudokuApp:
         self.puzzle: SudokuGrid = grid_from_str(puzzle_input, provided = True)
         self.appdata = { "default_status": partial(sudoku_mode, self.puzzle) }
         self.reset_statusbar = partial(statusbar_reset, self.appdata)
+
+        # TODO implement event bindings
+        self.event_queue: list[Event] = []
+        stdwin.on_post_key = partial(handle_events, self)
 
         self.init_big_sudoku()
         self.init_small_sudoku()
@@ -499,9 +516,6 @@ def coords_to_boxn(y: int, x: int) -> int:# {{{
 # }}}
 
 def sudoku_mark_errors(app: SudokuApp):# {{{
-    if app.appdata.get("no_checking", False):
-        return
-
     for index, cell in enumerate(app.puzzle.grid):
         cell.incorrect = False
         if cell.num is None:
@@ -526,6 +540,12 @@ def sudoku_mark_errors(app: SudokuApp):# {{{
             continue
 # }}}
 
+def sudoku_check_complete(app: SudokuApp) -> bool:# {{{
+    completed_cells = [cell for cell in app.puzzle.grid if cell.num is not None and not cell.incorrect]
+    if len(completed_cells) == len(app.puzzle.grid):
+        return True
+# }}}
+
 # TODO refactor as Actions
 def sudoku_ins(app: SudokuApp, digit: int):# {{{
     sudoku = app.puzzle
@@ -546,7 +566,7 @@ def sudoku_ins(app: SudokuApp, digit: int):# {{{
     elif sudoku.mode == GAMEMODE_NOTE:
         sudoku.grid[index].notes = (*old_notes, digit)
 
-    sudoku_mark_errors(app)
+    app.event_queue.append(EVENT_SUDOKU_CHANGED)
 # }}}
 
 # TODO refactor as Actions
@@ -560,7 +580,7 @@ def sudoku_del(app: SudokuApp):# {{{
     else:
         sudoku.grid[i].notes = tuple()
 
-    sudoku_mark_errors(app)
+    app.event_queue.append(EVENT_SUDOKU_CHANGED)
 # }}}
 
 def sudoku_toggle_note_mode(sudoku: SudokuGrid):# {{{
@@ -620,7 +640,8 @@ def information_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
             "         1-9 : enter digit",
             "      n or 0 : toggle `note` mode",
             "           q : quit",
-            "           r : reset"]
+            "           r : reset",
+            "           N : new game"]
     lines = [l[:w + 1] for l in lines]
     tui.win_addlines(win, lines[:h])
     return True
@@ -648,12 +669,7 @@ def statusbar_reset(appdata: dict):# {{{
     appdata['status'] = appdata.get("default_status", "")
 # }}}
 
-def move_cursor(appdata: dict, y: int = 0, x: int = 0) -> bool:# {{{
-    if (cursor_fn := appdata.get("cursor_fn", None)) is None:
-        return False
-    return cursor_fn(y = y, x = x)
-# }}}
-
+# TODO refactor
 def map_window(app: SudokuApp):# {{{
     stdscr = app.stdwin.stdscr
 
@@ -683,6 +699,17 @@ def map_window(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("C-C"), app.stdwin.quit)
 # }}}
 
+def move_cursor(appdata: dict, y: int = 0, x: int = 0) -> bool:# {{{
+    if (cursor_fn := appdata.get("cursor_fn", None)) is None:
+        return False
+    return cursor_fn(y = y, x = x)
+# }}}
+
+def cursor_restore(app: SudokuApp, cursor_fn: Callable[[], None]):# {{{
+    app.appdata["cursor_fn"] = cursor_fn
+# }}}
+
+# TODO refactor
 def map_cursor(app: SudokuApp):# {{{
     def on_move_rel(y = 0, x = 0):
         if move_cursor(app.appdata, y = y, x = x):
@@ -709,13 +736,14 @@ def map_cursor(app: SudokuApp):# {{{
     app.stdwin.add_mapping(tui.askey("KEY_UP"), mv_up)
 # }}}
 
+# TODO refactor
 def map_base(app: SudokuApp):# {{{
     map_window(app)
     map_cursor(app)
 # }}}
 
 def sudoku_restore(app: SudokuApp, on_move_sudoku_cursor: Callable[[], None], restore_cursor: tuple[int, int], restore_mode: int):# {{{
-    app.appdata["cursor_fn"] = on_move_sudoku_cursor
+    cursor_restore(app, on_move_sudoku_cursor)
     app.puzzle.cursor = restore_cursor
     app.puzzle.mode = restore_mode
 # }}}
@@ -732,6 +760,12 @@ def sudoku_reset(app: SudokuApp):# {{{
     app.stdwin.refresh()
 # }}}
 
+def new_game(app: SudokuApp):# {{{
+    app.puzzle_input = random_puzzle()
+    sudoku_reset(app)
+# }}}
+
+# TODO refactor
 def map_sudoku(app: SudokuApp):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app)
     app.appdata["cursor_fn"] = on_move_sudoku_cursor
@@ -781,38 +815,42 @@ def map_sudoku(app: SudokuApp):# {{{
 
     on_post_restore = partial(sudoku_restore, app, on_move_sudoku_cursor)
 
-    RESET_CONFIRM_MSG = "Are you sure you want to reset?"
-    RESET_CONFIRM_ITMS = (("Yes", partial(sudoku_reset, app)), ("&No",))
-    RESET_CONFIRM_KWARGS = {
-            "selection": 1,
-            "info": ["This will lose any progress you've made."],
-            "on_map": partial(map_base, app)}
-
-    def on_reset():
+    def on_confirm(*args, **kwargs):
         restore_cursor = app.puzzle.cursor
         restore_mode = app.puzzle.mode
         app.puzzle.cursor = (-1, -1)
         app.puzzle.mode = 0
         fn = partial(on_post_restore, restore_cursor, restore_mode)
-        app.on_overlay_confirm(fn, RESET_CONFIRM_MSG, *RESET_CONFIRM_ITMS, **RESET_CONFIRM_KWARGS)
+        app.on_overlay_confirm(fn, *args, **kwargs)
 
+    reset_confirm_msg = "Are you sure you want to reset?"
+    reset_confirm_itms = (("Yes", partial(sudoku_reset, app)), ("&No",))
+    reset_confirm_kwargs = {
+            "selection": 1,
+            "info": ["This will lose any progress you've made."],
+            "on_map": partial(map_base, app)}
+
+    on_reset = partial(on_confirm, reset_confirm_msg, *reset_confirm_itms, **reset_confirm_kwargs)
     app.stdwin.add_mapping(tui.askey("r"), on_reset)
 
-    QUIT_CONFIRM_MSG = "Are you sure you want to quit?"
-    QUIT_CONFIRM_ITMS = (("Yes", app.stdwin.quit), ("&No",))
-    QUIT_CONFIRM_KWARGS = {
+    newgame_msg = "Start a new game?"
+    newgame_itms = (("Yes", partial(new_game, app)), ("&No",))
+    newgame_kwargs = {
             "selection": 1,
             "info": ["This will lose any progress you've made."],
             "on_map": partial(map_base, app)}
 
-    def on_quit():
-        restore_cursor = app.puzzle.cursor
-        restore_mode = app.puzzle.mode
-        app.puzzle.cursor = (-1, -1)
-        app.puzzle.mode = 0
-        fn = partial(on_post_restore, restore_cursor, restore_mode)
-        app.on_overlay_confirm(fn, QUIT_CONFIRM_MSG, *QUIT_CONFIRM_ITMS, **QUIT_CONFIRM_KWARGS)
+    on_newgame = partial(on_confirm, newgame_msg, *newgame_itms, **newgame_kwargs)
+    app.stdwin.add_mapping(tui.askey("N"), on_newgame)
 
+    quit_confirm_msg = "Are you sure you want to quit?"
+    quit_confirm_itms = (("Yes", app.stdwin.quit), ("&No",))
+    quit_confirm_kwargs = {
+            "selection": 1,
+            "info": ["This will lose any progress you've made."],
+            "on_map": partial(map_base, app)}
+
+    on_quit = partial(on_confirm, quit_confirm_msg, *quit_confirm_itms, **quit_confirm_kwargs)
     app.stdwin.add_mapping(tui.askey("q"), on_quit)
 # }}}
 
@@ -830,9 +868,6 @@ def confirm_draw(app: SudokuApp, win: curses.window):# {{{
 
     h = len(info) + 3 + (padding * 2)
     w = max(len(msg), max(len(line) for line in info)) + (padding * 2)
-
-    tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
-    win.addstr(padding, (w - len(msg)) // 2, msg, ATTR_NORMAL)
 
     GAP_SENTINEL = object()
     cursor_pre = ("> ", ATTR_NORMAL)
@@ -879,12 +914,24 @@ def confirm_draw(app: SudokuApp, win: curses.window):# {{{
             rendered_starts.append(rendered_width)
             rendered_width += len(text) + 4
 
+    if rendered_width > w:
+        w = rendered_width + 2
+        gaplen = 0
+    else:
+        gaplen = (w - rendered_width) // (len(overlay.items) + 1)
+
+    if rendered_width >= curses.COLS:
+        app.appdata["status"] = "Screen too small to display dialog"
+        return False
+
+    tui.draw_box(win, 0, 0, h, w, ATTR_NORMAL)
+    win.addstr(padding, (w - len(msg)) // 2, msg, ATTR_NORMAL)
+
     y = padding + 2
     for line in info:
         win.addstr(y, (w - len(line)) // 2, line, ATTR_NORMAL)
         y += 1
 
-    gaplen = (w - rendered_width) // (len(overlay.items) + 1)
     gap = " " * gaplen
     y += 1
     x = 1
@@ -986,16 +1033,48 @@ def display_position(app: SudokuApp) -> str:# {{{
     return f"{y=} {x=} {boxn=}"
 # }}}
 
-EXAMPLE_PUZZLE  = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
-PUZZLE_SOLUTION = "684953217 592174386 713628945 876349152 429561873 135287469 968712534 251436798 347895621"
+def handle_events(app: SudokuApp):# {{{
+    queue = app.event_queue
+    while len(queue) != 0:
+        event = queue.pop(0)
+        if event.type == EVENT_SUDOKU_CHANGED.type:
+            if not app.appdata.get("no_checking", False):
+                sudoku_mark_errors(app)
+                app.stdwin.refresh()
+
+            if sudoku_check_complete(app):
+                app.event_queue.append(EVENT_SUDOKU_SOLVED)
+
+            continue
+
+        if event.type == EVENT_SUDOKU_SOLVED.type:
+            solved_msg = "You Win!"
+            solved_itms = (("New Game", partial(new_game, app)), ("Look at Grid",), ("Quit", app.stdwin.quit))
+            solved_kwargs = {
+                    "selection": 0,
+                    "info": ["What would you like to do?"],
+                    "on_map": partial(map_base, app)}
+
+            restore_cursor = app.puzzle.cursor
+            restore_mode = app.puzzle.mode
+            app.puzzle.cursor = (-1, -1)
+            app.puzzle.mode = 0
+            fn = partial(sudoku_restore, app, app.appdata["cursor_fn"], restore_cursor, restore_mode)
+            app.on_overlay_confirm(fn, solved_msg, *solved_itms, **solved_kwargs)
+            continue
+# }}}
 
 def main(stdwin: tui.MainWindow):
-    puzzle_input = EXAMPLE_PUZZLE
+    puzzle_input = random_puzzle()
     app = SudokuApp(stdwin, puzzle_input)
+
+    app.debug_vals["LINES"] = lambda: curses.LINES
+    app.debug_vals["COLS"] = lambda: curses.COLS
 
     app.debug_vals['sg'] = partial(tui.padview_clamp, app.small_sudoku_view)
     app.debug_vals['bg'] = partial(tui.padview_clamp, app.big_sudoku_view)
     app.debug_vals['pos'] = partial(display_position, app)
+    app.debug_vals['bv'] = partial(big_gridview_bounding_box, app)
 
     def row():
         cells = sudoku_row(app.puzzle, app.puzzle.cursor[0])

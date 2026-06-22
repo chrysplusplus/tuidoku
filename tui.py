@@ -135,14 +135,21 @@ ChildWindow = tuple[WindowDrawState, PadView | None]
 KeyMap = OrderedDict[Key, Callable[[], None]]
 
 class MainWindow:
-    __slots__ = ("_stdscr", "children", "keymap", "is_running", "_getkbytes", "stdcurs")
+    """Permits forwarding arguments via MainWindow.forwarding_args.
 
-    def __init__(self, stdscr_: curses.window, *, nodelay: bool = False):
+    See start_curses for more information."""
+
+    __slots__ = ("_stdscr", "children", "keymap", "is_running", "_getkbytes", "stdcurs", "on_post_key", "forwarding_args")
+
+    def __init__(self, stdscr_: curses.window, *args, nodelay: bool = False, on_post_key: Callable[[], None] | None = None, **kwargs):
         self._stdscr = stdscr_
         self.children: list[ChildWindow] = []
         self.keymap: KeyMap = OrderedDict()
         self.is_running = False
         self.stdcurs = Cursor((0, 0))
+        self.on_post_key = on_post_key
+
+        self.forwarding_args = (args, kwargs)
 
         if nodelay:
             curses.nodelay()
@@ -202,6 +209,9 @@ class MainWindow:
                 if key == mapped:
                     self.keymap[key]()
                     break
+
+            if self.on_post_key is not None:
+                self.on_post_key()
 
 class DisplayRestore:
     '''This class does not reset the keymap of the stdwin -- you have to do
@@ -383,8 +393,14 @@ def display_restore(dp: DisplayRestore):# {{{
 # }}}
 
 def start_curses(stdscr: curses.window, init_fn: Callable[[curses.window], None], main_fn: Callable[[MainWindow], T], *args, **kwargs) -> T:# {{{
+    """Initialise curses context and calls a main function with a constructed
+    MainWindow object. Any optional arguments passed to the MainWindow
+    constructor are forwarded to the main function via the forwarding_args
+    mechanism. Refer to MainWindow to see what keynames are consumed by its
+    constructor."""
     init_fn(stdscr)
-    stdwin = MainWindow(stdscr)
+    stdwin = MainWindow(stdscr, *args, **kwargs)
+    args, kwargs = stdwin.forwarding_args
     return main_fn(stdwin, *args, **kwargs)
 # }}}
 
