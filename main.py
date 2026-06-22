@@ -720,6 +720,18 @@ def sudoku_restore(app: SudokuApp, on_move_sudoku_cursor: Callable[[], None], re
     app.puzzle.mode = restore_mode
 # }}}
 
+def sudoku_reset(app: SudokuApp):# {{{
+    app.puzzle = grid_from_str(app.puzzle_input, provided = True)
+    assert app.puzzle is not None
+    app.stdwin.keymap.clear()
+    map_base(app)
+    map_sudoku(app)
+    nudge_coords_into_view(app, app.puzzle.cursor)
+    app.appdata["default_status"] = partial(sudoku_mode, app.puzzle)
+    app.reset_statusbar()
+    app.stdwin.refresh()
+# }}}
+
 def map_sudoku(app: SudokuApp):# {{{
     on_move_sudoku_cursor = partial(sudoku_move_rel_cursor, app)
     app.appdata["cursor_fn"] = on_move_sudoku_cursor
@@ -769,17 +781,8 @@ def map_sudoku(app: SudokuApp):# {{{
 
     on_post_restore = partial(sudoku_restore, app, on_move_sudoku_cursor)
 
-    def do_reset():
-        app.puzzle = grid_from_str(app.puzzle_input, provided = True)
-        assert app.puzzle is not None
-        app.stdwin.keymap.clear()
-        map_base(app)
-        map_sudoku(app)
-        nudge_coords_into_view(app, app.puzzle.cursor)
-        app.stdwin.refresh()
-
     RESET_CONFIRM_MSG = "Are you sure you want to reset?"
-    RESET_CONFIRM_ITMS = (("Yes", do_reset), ("&No",))
+    RESET_CONFIRM_ITMS = (("Yes", partial(sudoku_reset, app)), ("&No",))
     RESET_CONFIRM_KWARGS = {
             "selection": 1,
             "info": ["This will lose any progress you've made."],
@@ -983,8 +986,8 @@ def display_position(app: SudokuApp) -> str:# {{{
     return f"{y=} {x=} {boxn=}"
 # }}}
 
-EXAMPLE_PUZZLE = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
-PUZZLE_SOLUTION = "68493217 592174386 713628945 876349152 429561873 135287469 968712534 251436987 347895621"
+EXAMPLE_PUZZLE  = "6...5...7 .9.1..3.. 7..6..94. 8..34.1.. ...5.1... ..5.87..9 .68..2..4 ..1..6.9. 3...9...1"
+PUZZLE_SOLUTION = "684953217 592174386 713628945 876349152 429561873 135287469 968712534 251436798 347895621"
 
 def main(stdwin: tui.MainWindow):
     puzzle_input = EXAMPLE_PUZZLE
