@@ -641,7 +641,7 @@ def information_draw(app: SudokuApp, win: curses.window) -> bool:# {{{
             "      n or 0 : toggle `note` mode",
             "           q : quit",
             "           r : reset",
-            "           N : new game"]
+            "     shift-n : new game"]
     lines = [l[:w + 1] for l in lines]
     tui.win_addlines(win, lines[:h])
     return True
